@@ -1,0 +1,57 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+
+# Pipeline outputs and intermediate artifacts
+outputs/
+data/raw/*.jsonl
+data/pairs/*.jsonl
+data/labeled/*.jsonl
+data/formatted/*.jsonl
+
+# Model checkpoints and adapters
+*.safetensors
+*.bin
+*.gguf
+*.ckpt
+*.pt
+*.pth
+checkpoints/
+train/checkpoints/
+adapters/
+merged/
+
+# Caches
+.cache/
+.huggingface/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code local state
+.claude/scheduled_tasks.lock

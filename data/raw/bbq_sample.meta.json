@@ -1,0 +1,76 @@
+{
+  "seed": 42,
+  "n_rows_target": 1500,
+  "n_rows_actual": 1500,
+  "per_cell_counts": {
+    "age": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "disability_status": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "gender_identity": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "nationality": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "physical_appearance": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "race_ethnicity": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "race_x_gender": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "race_x_ses": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "religion": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "ses": {
+      "ambig/neg": 34,
+      "ambig/nonneg": 34,
+      "disambig/neg": 34,
+      "disambig/nonneg": 34
+    },
+    "sexual_orientation": {
+      "ambig/neg": 35,
+      "ambig/nonneg": 35,
+      "disambig/neg": 35,
+      "disambig/nonneg": 35
+    }
+  },
+  "warnings": [],
+  "sampled_at_utc": "2026-04-26T14:16:39.479853+00:00",
+  "bbq_dataset_revision": "56cd2dcb60a10288b4f1a9c8cff6cf120141c08a"
+}
