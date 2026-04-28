@@ -29,6 +29,11 @@ data/pairs/*.jsonl
 data/labeled/*.jsonl
 data/formatted/*.jsonl
 
+# Locked v1 raw artifacts (tracked despite the broad ignore above).
+# These cost real API spend / pin reproducibility, so they live in git.
+!data/raw/bbq_sample.jsonl
+!data/raw/candidates.jsonl
+
 # Model checkpoints and adapters
 *.safetensors
 *.bin
