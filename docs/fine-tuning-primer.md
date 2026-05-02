@@ -2,20 +2,22 @@
 
 A conceptual reference building from gradient descent fundamentals up to the modern fine-tuning stack.
 
+> **Project target:** This primer is written with **Gemma 4 E4B** as the fine-tuning target (4B effective parameters, ~6.87B raw parameters via MatFormer + Per-Layer Embedding architecture). Concepts apply to most small instruction-tuned models; specifics like VRAM math and chat template details are written for Gemma 4 E4B.
+
 ---
 
 ## Step 1: Why fine-tuning is hard in the first place
 
-Gemma 3 4B has ~4 billion parameters. Each is a float. In standard training you'd:
+Gemma 4 E4B has ~6.87 billion raw parameters (operating at ~4 billion effective parameters via MatFormer architecture). Each parameter is a float. In standard training you'd:
 
-1. Load the model in fp16 (2 bytes per param) → **8 GB just for weights**
-2. Compute gradients during backprop → another **8 GB**
-3. Adam optimizer keeps two state values per param (momentum, variance) → **16 GB more**
+1. Load the model in fp16 (2 bytes per param) → **~14 GB just for weights**
+2. Compute gradients during backprop → another **~14 GB**
+3. Adam optimizer keeps two state values per param (momentum, variance) → **~28 GB more**
 4. Activations stored for backprop → another **5–15 GB** depending on sequence length
 
-So full fine-tuning a 4B model needs ~**40–60 GB of VRAM**. A 70B model? You're looking at 700+ GB, multi-node distributed training, the whole circus. This is why nobody full-fine-tunes anymore unless they have to.
+So full fine-tuning a Gemma 4 E4B model needs ~**60–80 GB of VRAM**. A 70B model? You're looking at 700+ GB, multi-node distributed training, the whole circus. This is why nobody full-fine-tunes anymore unless they have to.
 
-The entire PEFT (Parameter-Efficient Fine-Tuning) movement exists to dodge this. The insight is: **you don't actually need to update all 4 billion parameters to teach the model a new task.** Most of the knowledge is already there from pretraining. You just need to nudge it.
+The entire PEFT (Parameter-Efficient Fine-Tuning) movement exists to dodge this. The insight is: **you don't actually need to update all those parameters to teach the model a new task.** Most of the knowledge is already there from pretraining. You just need to nudge it.
 
 ---
 
@@ -74,13 +76,15 @@ Mental model:
 
 ## Step 3: QLoRA — squeezing it further
 
-LoRA reduced *trainable* parameters, but you still have to load the frozen 4B base model into VRAM. That's still 8 GB in fp16.
+LoRA reduced *trainable* parameters, but you still have to load the frozen base model into VRAM. For Gemma 4 E4B, that's ~14 GB in fp16.
 
-QLoRA's trick: load the frozen base model in **4-bit quantization** instead of fp16. Now your 8 GB of weights becomes 2 GB. The LoRA adapters themselves stay in fp16/bf16 because they're small and you need precision for the gradients.
+QLoRA's trick: load the frozen base model in **4-bit quantization** instead of fp16. Now your ~14 GB of weights becomes **~4 GB**. The LoRA adapters themselves stay in fp16/bf16 because they're small and you need precision for the gradients.
 
 This is what `load_in_4bit=True` does. It uses a special data type called NF4 (Normal Float 4-bit) that's calibrated for the distribution of neural network weights, so you lose surprisingly little accuracy.
 
-**Net result:** you can QLoRA-fine-tune a 7B model on a 16 GB consumer GPU. A 4B model fits in 8 GB. This is the "democratization" everyone talks about.
+**Net result:** you can QLoRA-fine-tune Gemma 4 E4B on a 12 GB consumer GPU. Free Colab T4 works. This is the "democratization" everyone talks about.
+
+Unsloth's recommendation for Gemma 4 specifically: use **E4B with QLoRA** (rather than E2B with LoRA) — the bigger effective-parameter count more than makes up for the 4-bit quantization accuracy loss. For 26B-A4B (the MoE variant), Unsloth specifically warns *against* QLoRA and recommends 16-bit LoRA instead.
 
 The catch: training is a bit slower because you have to dequantize on-the-fly during forward/backward passes. But with Unsloth's custom kernels, this overhead is small.
 
@@ -97,7 +101,9 @@ Specifically, the Unsloth team rewrote the most expensive operations in the trai
 - RMSNorm
 - Cross-entropy loss
 
-These are the bottlenecks in the standard Hugging Face training loop. By fusing operations and avoiding redundant memory reads, they get ~1.5–2x speedup and ~50–60% VRAM reduction with no accuracy loss.
+These are the bottlenecks in the standard Hugging Face training loop. By fusing operations and avoiding redundant memory reads, they get ~1.5–2x speedup and ~50–70% VRAM reduction with no accuracy loss.
+
+Unsloth has **day-zero support for all four Gemma 4 variants** (E2B, E4B, 26B-A4B, 31B). For Gemma 4 E4B, they advertise ~1.5x faster training and ~60% less VRAM than FlashAttention-2 setups.
 
 Practically: Unsloth gives you a drop-in replacement for `AutoModelForCausalLM`. You write basically the same code as you would with vanilla HF, but it's faster and uses less memory.
 
@@ -121,6 +127,24 @@ Target: "<reasoning>...</reasoning><verdict>A</verdict>"
 The model learns to produce the target given the input. Standard cross-entropy loss on every token of the target. There's a subtlety called "completion-only loss" where you mask out the loss on the input portion (you only want to learn to *generate* the answer, not memorize the questions), but that's a detail.
 
 `SFTTrainer` from the TRL library handles all this for you. You give it a dataset, a model, and hyperparameters. It runs the loop.
+
+### A specific design decision: custom tags vs. native thinking mode
+
+Gemma 4 introduces a **native thinking mode** triggered by the `<|think|>` token in the system prompt. When enabled, the model emits an internal reasoning channel before its final answer. This is similar in spirit to the project's `<reasoning>...</reasoning><verdict>...</verdict>` format, but built-in.
+
+This project chose **custom tags with thinking mode disabled**. Reasoning:
+
+1. The labeling pipeline produces structured `<reasoning>`/`<verdict>` tags directly — no remapping needed for SFT/DPO formatting.
+2. The format is portable — if a future iteration swaps Gemma 4 for another base model, the training data stays valid.
+3. Comparing fine-tuned-judge vs. base-Gemma-4 in eval is cleaner when both run without thinking mode.
+
+**Critical consistency rule:** train and infer with the same configuration. The system prompt at training time has *no* `<|think|>` token; the system prompt at every inference site (Stage 8 eval, Stage 9 Modelfile, downstream users) must also omit it. Behavior on tokens the model didn't see during training is unpredictable. The published model card must explicitly instruct users not to enable thinking mode.
+
+One quirk worth knowing: with thinking disabled, larger Gemma 4 models can still emit an empty thought block before the answer. For E4B this is rare but possible — if you see weird empty leading tokens in fine-tuned output, that's why. Solution: include a few SFT examples that explicitly start with `<reasoning>` to anchor the format.
+
+### Chat template
+
+Gemma 4 uses **standard system/user/assistant roles** (a departure from Gemma 3's custom format) and supports a native system role. Use `tokenizer.apply_chat_template()` with the Gemma 4 tokenizer — it handles the wrapping. Don't hand-roll the template strings; the tokenizer is authoritative.
 
 ---
 
@@ -249,19 +273,19 @@ GRPO is great for verifiable tasks (math, code) where you can automatically chec
 
 Here's the full flow with all the terms in their right place:
 
-1. **Generate dataset.** Use Claude/GPT-4 to label pairs from BBQ/BOLD/StereoSet. Each row: prompt, chosen_response, rejected_response.
+1. **Generate dataset.** Use Claude/GPT-4 to label pairs from BBQ. Each row: prompt, chosen_response, rejected_response.
 
-2. **SFT phase.** Load Gemma 3 4B in 4-bit (QLoRA), attach LoRA adapters (r=16, all linear layers). Train on `(prompt → chosen)` pairs with `SFTTrainer`. ~3 epochs. This teaches format and basic judgment.
+2. **SFT phase.** Load Gemma 4 E4B in 4-bit (QLoRA), attach LoRA adapters (r=16, all linear layers). Train on `(prompt → chosen)` pairs with `SFTTrainer`. ~3 epochs. This teaches format and basic judgment. Use the Gemma 4 tokenizer's `apply_chat_template()` for wrapping; do NOT include `<|think|>` in the system prompt — see Step 5 design decision.
 
 3. **DPO phase.** Take the SFT-trained model. Train with `DPOTrainer` on `(prompt, chosen, rejected)` triplets. ~1 epoch, low learning rate (5e-6 ish), beta=0.1. This sharpens the discrimination.
 
 4. **Merge LoRA adapters into base weights.** `model.merge_and_unload()` — now the LoRA matrices are baked in and you have a single model.
 
-5. **Quantize to GGUF.** Convert to Q4_K_M or Q5_K_M format using llama.cpp's converter. This is what Ollama consumes.
+5. **Quantize to GGUF.** Convert using llama.cpp's converter. **For Gemma 4 small models, Unsloth recommends 8-bit GGUF as the Pareto starting point** (per their KL-divergence benchmarks). For larger models in the family, dynamic 4-bit is preferred. This is what Ollama consumes.
 
-6. **Push to Hugging Face.** Both the merged fp16 model (for vLLM users) and the GGUF (for Ollama users).
+6. **Push to Hugging Face.** Both the merged fp16 model (for vLLM users) and the GGUF (for Ollama users). Model card must include explicit instructions: "Do not enable thinking mode (`<|think|>`) at inference time — this model was fine-tuned with thinking disabled."
 
-7. **Evaluate.** Run the judge on your held-out human-labeled set. Compute Cohen's κ, position-bias rate, etc.
+7. **Evaluate.** Run the judge on your held-out human-labeled set. Compute Cohen's κ, position-bias rate, etc. Run inference *without* thinking mode (matches training).
 
 Steps 2 and 3 are where the GPU time happens. Steps 4–6 are CPU work mostly.
 
@@ -275,7 +299,7 @@ For QLoRA SFT, the ones that move the needle:
 - **Batch size**: limited by VRAM. Use gradient accumulation to hit an effective batch size of 16–32.
 - **Epochs**: 3 for SFT, 1 for DPO. More than this usually overfits.
 - **LoRA rank**: 16–32. Don't go above 64 unless you've ruled out other issues.
-- **Max sequence length**: as short as possible while fitting your data. Each doubling roughly doubles VRAM usage.
+- **Max sequence length**: as short as possible while fitting your data. Each doubling roughly doubles VRAM usage. (Gemma 4 E4B supports up to 128K context, but that's not relevant for short judge prompts.)
 
 Everything else (warmup, scheduler, weight decay) — use the defaults from the Unsloth notebooks.
 
@@ -424,24 +448,24 @@ This is where most fine-tuning projects actually succeed or fail. The model arch
 
 ## By the numbers — the whole pipeline at a glance
 
-Concrete targets for the project. All later sections trace back to these:
+Concrete targets for the project as currently scoped (post Stage 2; reflects Gemma 4 E4B model swap and religion-only OOD holdout):
 
 | Stage | Count | Notes |
 |---|---|---|
-| BBQ questions sampled | **1,500** | Out of ~58k available; balanced across 9 bias categories |
-| Candidate generator models | **4** | Llama 3.1 8B, Mistral 7B, Qwen 2.5 7B, Phi-3 Mini |
+| BBQ questions sampled | **3,000** | Out of ~58k available; balanced across 11 bias categories including intersectional |
+| Candidate generator models | **4** | Llama 3 8B, Llama 3.1 8B, Mistral 7B v0.1, Qwen 2.5 7B (via OpenRouter) |
 | Candidates per question | **4** | One per model |
-| Total candidate responses | **6,000** | 1,500 × 4 |
-| Pairs constructed | **4,500** | Average 3 pairs per question, via pairing strategy |
-| Pairs held out for human eval | **300** | Pulled before Claude labeling |
-| Pairs sent to Claude for labeling | **4,200** | 4,500 − 300 |
-| **SFT training set** | **8,000 rows** | 4,200 unique × ~2 (position-swap) ≈ 8,400, trim to 8,000 |
-| **DPO training set** | **3,000 rows** | 1,500 highest-quality records × 2 (position-swap) |
-| **Human-labeled eval set** | **300 rows** | 240 BBQ-style + 60 CrowS-Pairs (OOD generalization) |
+| Total candidate responses | **12,000** | 3,000 × 4 |
+| Pairs constructed | **2,370** | Smaller than original plan due to BBQ structural constraint and classification-leak fix |
+| Pairs held out for human eval | **300** | 240 in-dist (10 trained-on cats) + 60 OOD (religion held out) |
+| Pairs sent to Claude for labeling | **~1,915** | 2,370 − 300 eval − 155 unused-religion |
+| **SFT training set** | **~3,830 rows** | ~1,915 × 2 (position-swap) |
+| **DPO training set** | **~1,700 rows** | ~50% of labeled pairs qualify for DPO × 2 |
+| **Human-labeled eval set** | **300 rows** | 240 in-dist + 60 OOD (held-out religion) |
 | Claude API spend | **~$20-30** | Opus 4.7 with Batch API + prompt caching |
 | Total project compute | **~$10-20** | Single A100 for ~6 GPU-hours |
 
-The next sections explain how each of these numbers is derived and used.
+These numbers are below the original primer targets (which assumed ~4,500 pairs, 8,000 SFT rows). Reasons documented in `project-status.md`. The training pool is below the rough "5k SFT comfort floor" but the data quality is high; eval will tell us whether it was enough.
 
 ## The four canonical bias evaluation datasets
 
@@ -465,55 +489,29 @@ A model with age bias will pick (a) even without evidence.
 "Men don't know how to drive."     (anti-stereotype)
 ```
 
-Smaller dataset, very clean signal.
+Smaller dataset, very clean signal — but **wrong task** for this project. CrowS tests "which sentence reflects a recognized stereotype," which is a different question from "which model response inappropriately leaned on a stereotype to answer." Some CrowS-flagged "biased" sentences are factually correct generalizations; the judge would learn to pick stereotype-shaped sentences rather than detect inappropriate use of stereotypes. **Rejected for this project's eval.**
 
 **StereoSet** — MIT, 2020. ~17k examples testing stereotype association. Mostly subsumed by BBQ for this project's purposes.
 
 **BOLD (Bias in Open-Ended Language)** — Amazon, 2021. ~24k prompts that elicit free-form generations. More realistic but harder to evaluate automatically because it requires assessing free-form text.
 
-### Recommendation for REVAL — and how to use each dataset
+**UnQover** — UPenn/AllenAI, EMNLP 2020 Findings. Underspecified questions where the right answer is always "cannot determine" because neither demographic group is implicated by the context. The original repo (`allenai/unqover`) provides templates, subjects, and attributes for generating questions on demand across gender, nationality, ethnicity, and religion. **Deferred to v2b** as a "different dataset entirely" OOD eval slice — same task as the judge (evaluating model responses to bias-eliciting questions), different source distribution from BBQ.
 
-**BBQ for training. CrowS-Pairs for out-of-distribution evaluation. StereoSet and BOLD: skip.**
+## Recommendation for REVAL
 
-The reasoning matters because BBQ and CrowS-Pairs have *different shapes* and slot into the pipeline differently.
+**BBQ for training and in-distribution eval. Held-out BBQ category (religion) for v1 OOD eval. UnQover for v2b OOD eval expansion. CrowS-Pairs, StereoSet, BOLD: skip.**
 
-#### BBQ — primary training source
+The reasoning matters because BBQ slots directly into the pipeline (questions → generator pool → candidates → pairs → labels), while the other datasets either don't fit the task or require extra pipeline work to use.
 
-BBQ entries are full questions with multiple-choice answers, so the path is direct: use the questions to elicit responses from generator models, pair the responses, label with Claude, train. This is the pipeline described in the rest of this appendix.
+### Why hold out a BBQ category instead of using a different dataset for v1 OOD?
 
-#### CrowS-Pairs — three possible uses
+A BBQ-trained judge could learn either (a) bias detection as a transferable skill, or (b) BBQ's surface patterns. Both produce identical in-distribution κ. To distinguish them, you need OOD eval on the same task. Two options:
 
-A CrowS-Pairs entry is *not* a question — it's two minimally-different sentences:
+1. **Hold out a BBQ category from training.** The held-out category is genuinely OOD for the judge (it never saw religion-bias examples) but still the same task (judging model responses for bias). Zero new pipeline work; just a filter in pair construction. Done in v1.
 
-```
-sent_more:    "Women don't know how to drive."
-sent_less:    "Men don't know how to drive."
-bias_type:    "gender"
-```
+2. **Use a different dataset entirely (UnQover).** Stronger OOD claim (different generation distribution, different question style). Requires running a mini Stage 1 + Stage 2 + Stage 3b just for ~60 eval pairs. Deferred to v2b.
 
-There's no question, no model response, just stereotype/anti-stereotype sentence pairs. So you can't drop CrowS-Pairs into the BBQ pipeline directly. Three ways to use it:
-
-1. **As prompts for generator models.** Use CrowS-Pairs sentences as completion prompts ("Complete this sentence: 'Women...'"). Collect candidate completions from Llama, Mistral, Qwen, Phi. Some will produce stereotype-aligned completions; some won't. You now have candidate pairs in BBQ-pipeline-compatible format. **Useful as a stretch goal if you're short on subtle-bias training pairs after the first labeling run.**
-
-2. **Reformatted directly as judge inputs.** Wrap the two sentences in a "which is more biased?" prompt and use as training data. Limited value: the homogeneous structure means your judge would overfit to "compare two sentences" rather than learn to evaluate model responses. Skip this.
-
-3. **Held-out generalization eval.** Reformat CrowS-Pairs into judge prompts and use them *only in the eval set*. Your judge has been trained entirely on BBQ-style pairs (full Q&A scenarios), so CrowS-Pairs (sentence pairs) is genuine out-of-distribution data. **This is what you should do.**
-
-#### Why option 3 is the right move
-
-Reporting only on the dataset you trained on is the weakest evaluation methodology in machine learning. Training on BBQ and evaluating on BBQ measures in-distribution performance — useful but limited. Training on BBQ and evaluating on a *different* bias evaluation format measures whether your judge **generalizes**.
-
-The headline number for your model card becomes much stronger:
-
-> "0.78 Cohen's κ on BBQ-style evaluation (in-distribution); 0.74 κ on CrowS-Pairs-derived evaluation (out-of-distribution). The small drop indicates the judge has learned bias detection rather than memorizing BBQ patterns."
-
-A small drop is honest and expected. A large drop would reveal overfitting. Either way, the number tells a recruiter you understand evaluation rigor — which most candidates don't.
-
-#### Concrete split
-
-- **Training set (8k SFT, 3k DPO)**: 100% BBQ-derived.
-- **Human-labeled eval set (300 rows)**: 240 BBQ-style + 60 CrowS-Pairs-derived.
-- **Stretch goal**: Use 1 (CrowS-Pairs sentences as generator prompts) only if your initial pairing run is short on subtle-bias cases.
+Both options are real OOD; v1 takes the cheaper path, v2b adds the stronger claim once v1 ships.
 
 ## The critical reframing
 
@@ -555,76 +553,80 @@ Both stages of training use rows derived from the same labeled records, but pack
 
 Same labeling work feeds both. SFT teaches format and basic behavior; DPO teaches the discrimination (see Step 6 in the main primer).
 
+The prompt is wrapped via `tokenizer.apply_chat_template()` at training time — do not hand-roll the chat template strings. The target uses custom `<reasoning>...</reasoning><verdict>...</verdict>` tags rather than Gemma 4's native thinking channel; the system prompt does NOT include `<|think|>`.
+
 ## The five-stage labeling pipeline
 
 **Stage 1: Generate candidate responses.**
 
-Sample **1,500 questions from BBQ**, balanced across the 9 bias categories (~165 questions per category). Mix ambiguous and disambiguated versions roughly 60/40, since ambiguous cases are where bias actually shows.
+Sample **3,000 questions from BBQ**, balanced across the 11 bias categories. Mix ambiguous and disambiguated versions 50/50, since both test important judge capabilities.
 
-For each question, run inference through **4 generator models**: Llama 3.1 8B Instruct, Mistral 7B Instruct, Qwen 2.5 7B Instruct, Phi-3 Mini. One response per model per question.
+For each question, run inference through **4 generator models** via OpenRouter: Llama 3 8B Instruct, Llama 3.1 8B Instruct, Mistral 7B Instruct v0.1, Qwen 2.5 7B Instruct. One response per model per question.
+
+**Why small models specifically.** This is a deliberate design choice, not a cost optimization. BBQ candidate generation needs a meaningful fraction of *biased* responses to construct training pairs. Larger, more-RLHFed models tend to produce hedged "cannot determine" responses on ambiguous questions, leaving nothing to pair against. Smaller models in the 7-8B range fall back on training-data priors when context is ambiguous — which is where stereotypes live. Different stages use different model classes; Stage 1 uses small generators because the role here is *eliciting bias*, not *judging it*.
 
 **Critical:** never use Gemma (your fine-tuning target) as a generator. Self-evaluation bias is real and well-documented.
 
-Output: **6,000 candidate responses** organized as 1,500 records of `(question, [r_llama, r_mistral, r_qwen, r_phi])`.
+Output: **12,000 candidate responses** organized as 3,000 records of `(question, [r_llama3, r_llama31, r_mistral, r_qwen])`.
 
 Cost: free or near-free if you run this through local vLLM or a HF Inference endpoint. Allow ~2-3 hours of GPU time.
 
 **Stage 2: Construct pairs via the pairing strategy.**
 
-From each question's 4 candidates, sample **3 pairs on average** (some questions yield 2, some 4, depending on candidate diversity). Apply the category targets in the pairing strategy section below.
+From each question's 4 candidates, sample pairs targeting the bucket distribution in the pairing strategy section below.
 
-Output: **4,500 pairs** ready for labeling.
+Output: **2,370 pairs** ready for labeling.
 
-**Before sending to Claude, hold out 300 pairs for the human-labeled eval set** (see Stage 5). The remaining **4,200 pairs** go to Claude.
+**Before sending to Claude, hold out 300 pairs for the human-labeled eval set** (see Stage 5). The remaining ~1,915 pairs go to Claude.
 
 **Stage 3: Label pairs with Claude (or GPT-4).**
 
-For each of the 4,200 pairs, ask Claude which response is more biased and why. Use a careful structured prompt requiring chain-of-thought reasoning followed by a verdict in fixed format.
+For each of the ~1,915 pairs, ask Claude which response is more biased and why. Use a careful structured prompt requiring chain-of-thought reasoning followed by a verdict in fixed format.
 
-Per-call rough budget: ~150 tokens cached system prompt + ~500 tokens fresh input + ~300 tokens output ≈ 950 tokens. Across 4,200 calls with **Batch API (50% off) and prompt caching (90% off cached tokens)**, this lands in the **$20-30 range** for the full corpus on Opus 4.7. Without those optimizations you're looking at ~$45.
+Per-call rough budget: ~150 tokens cached system prompt + ~500 tokens fresh input + ~300 tokens output ≈ 950 tokens. With **Batch API (50% off) and prompt caching (90% off cached tokens)**, the full corpus on Opus 4.7 lands in the **$20-30 range**.
 
-Output: **4,200 labeled records** of `(question, response_A, response_B, claude_reasoning, claude_verdict)`.
+Output: **~1,915 labeled records** of `(question, response_A, response_B, claude_reasoning, claude_verdict)`.
 
 **Stage 4a: Build the SFT dataset.**
 
-From each of the 4,200 labeled records, produce one row:
+From each labeled record, produce one row:
 
 - `prompt` = the judge prompt template filled with the question and two responses.
 - `target` = `<reasoning>{claude_reasoning}</reasoning><verdict>{claude_verdict}</verdict>`
 
-Apply position-swap doubling: 4,200 × 2 = **8,400 rows**. Trim to **8,000** by dropping records where Claude flagged low confidence (it should output a confidence score in the labeling prompt).
+Apply position-swap doubling: ~1,915 × 2 ≈ **~3,830 rows**. Trim records where Claude flagged low confidence.
 
 **Stage 4b: Build the DPO dataset.**
 
-From the 4,200 labeled records, select the **1,500 highest-quality** preference cases (clear chosen/rejected distinction, no ties, Claude high confidence). For each, produce one row with three fields:
+From the labeled records, select the highest-quality preference cases (clear chosen/rejected distinction, no ties, Claude high confidence). For each, produce one row with three fields:
 
 - `prompt` = same as SFT.
 - `chosen` = same content as the SFT target.
 - `rejected` = a constructed incorrect response.
 
-Sources for the rejected response, allocated across the 1,500 DPO records:
+Sources for the rejected response (allocated across DPO records):
 
-- **600 records (40%)**: synthesized failure-mode responses — verbosity, position bias, shallow reasoning. Highest training signal.
-- **600 records (40%)**: weaker-model mistakes — run Llama 3.1 8B on the same evaluation; its disagreements with Claude become rejected responses.
-- **300 records (20%)**: verdict-flips — flip Claude's verdict, optionally have Claude write a bad rationalization. Lowest signal but cheapest to produce.
+- **40% synthesized failure-mode responses** — verbosity, position bias, shallow reasoning. Highest training signal.
+- **40% weaker-model mistakes** — run Qwen 2.5 7B (via Together AI) on the same evaluation. Disagreements with Claude become rejected responses.
+- **20% verdict-flips** — flip Claude's verdict, optionally have Claude write a bad rationalization.
 
-Apply position-swap doubling: 1,500 × 2 = **3,000 DPO rows**.
+Apply position-swap doubling. Target: ~1,700 DPO rows.
 
 **Stage 5: Hold out a human-labeled eval set.**
 
 The 300 pairs you pulled out in Stage 2 — label these yourself, by hand. Don't send them to Claude. They're your evaluation gold.
 
-Composition (mixes in-distribution and out-of-distribution to test both accuracy *and* generalization):
+Composition for v1:
 
-| Source | Count | Category breakdown | Purpose |
+| Source | Count | Composition | Purpose |
 |---|---|---|---|
-| BBQ-derived pairs | **240** | 110 clear / 50 subtle / 35 bias-vs-bias / 25 tie / 20 adversarial | In-distribution accuracy |
-| CrowS-Pairs-derived pairs | **60** | Drawn evenly across 9 bias categories | Out-of-distribution generalization |
+| BBQ pairs (10 trained-on cats, stratified) | **240** | Stratified across pair_category and BBQ category | In-distribution accuracy |
+| BBQ religion pairs (held out from training) | **60** | Same pair_category mix as training | OOD generalization on unseen bias category |
 | **Total** | **300** | | |
 
 300 is the sweet spot: large enough for statistically meaningful Cohen's κ comparisons, small enough that hand-labeling is realistic (~6-10 hours of careful work spread across a few sessions).
 
-Without this set, you can't claim your judge is good — only that it agrees with Claude, which is circular reasoning. The OOD slice (CrowS-Pairs) is what lets you claim *generalization*, not just accuracy.
+Without this set, you can't claim your judge is good — only that it agrees with Claude, which is circular reasoning. The OOD slice (religion) is what lets you claim *generalization*, not just accuracy.
 
 ## Hard cases and tiered labeling
 
@@ -676,39 +678,26 @@ A is *formally* a clean response — no stereotype, defers correctly. B is a hed
 
 You don't have to hand-classify. Four heuristics, in order of usefulness:
 
-1. **Pre-tagged categories.** Your pairing strategy already tagged each pair. The "subtle bias," "bias vs. bias," and "adversarial" categories (~45% of your dataset) are *by construction* the hard cases. Route these to the frontier labeler; route "clear bias" and "tie" categories to the cheap one.
+1. **Pre-tagged categories.** Your pairing strategy already tagged each pair. The "subtle bias," "tracked-vs-alternate" (project's bias-vs-bias substitute), and "adversarial" categories are *by construction* the hard cases. Route these to the frontier labeler.
 
 2. **Disagreement detection.** Run two cheap labelers (Haiku 4.5 + GPT-5.4-mini) in parallel. Pairs where they disagree → escalate to frontier model. Cheap and very effective at finding genuinely ambiguous cases.
 
 3. **Confidence flags.** Have the cheap labeler output a 1-5 confidence score with each verdict. Pairs scoring < 4 → escalate.
 
-4. **Linguistic heuristics.** Pairs where one response is significantly longer than the other, where one uses extensive hedging language ("perhaps," "maybe," "I think"), or where neither response is a clear refusal — these tend to be harder.
-
-### Cost analysis: is tiered labeling worth it?
-
-For 4,200 pairs with Batch API + caching:
-
-| Approach | Cost | Notes |
-|---|---|---|
-| All Opus 4.7 | ~$21 | Simple, defensible, no routing complexity |
-| All Haiku 4.5 | ~$4 | Cheap but quality risk on hard cases |
-| Tiered (50% Haiku, 50% Opus) | ~$13 | Saves $8 vs. all-Opus |
-| Dual cheap labelers (Haiku + GPT-mini), Opus on disagreements | ~$15 | Saves $6 but adds methodological credibility |
-
-At this scale, **the cost savings from tiered labeling are not material** ($6-8). The reason to do tiered labeling at small scale isn't cost — it's the *methodological win* of cross-checking with disagreement detection.
+4. **Linguistic heuristics.** Pairs where one response is significantly longer than the other, where one uses extensive hedging language, or where neither response is a clear refusal — these tend to be harder.
 
 ### My recommendation
 
 For a portfolio project, do this:
 
-- **Primary labeling: Opus 4.7 on all 4,200 pairs** via Batch API. ~$21. Simplest pipeline, no routing logic, defensible.
-- **Cross-check: GPT-5.4 on 500 pairs** drawn from the subtle/tie/adversarial categories. ~$3 extra. Where Opus and GPT-5.4 disagree, hand-adjudicate (or send to your human eval set).
+- **Primary labeling: Opus 4.7 on all ~1,915 pairs** via Batch API. ~$15-20. Simplest pipeline, no routing logic, defensible.
+- **Cross-check: GPT-5.4 + DeepSeek V3.1 on 500 pairs** drawn from the subtle/tie/adversarial categories. ~$3-5 extra. Where any two labelers disagree, hand-adjudicate (or send to your human eval set).
 
-This costs ~$24 total (within the $20-30 budget) and gives you a much stronger README sentence:
+This gives you a much stronger README sentence:
 
-> "Primary labels from Claude Opus 4.7. Cross-verified with GPT-5.4 on 500 ambiguous pairs to detect labeler-introduced bias. Disagreement rate: 8%. Human adjudication on disagreements."
+> "Primary labels from Claude Opus 4.7. Cross-verified with GPT-5.4 and DeepSeek V3.1 on 500 ambiguous pairs to detect labeler-introduced bias. Disagreement rate: 8%. Human adjudication on disagreements."
 
-That sentence is methodologically credible in a way that "I labeled with one model" is not. The 8% disagreement rate (or whatever it turns out to be) is itself an interesting datum for the README.
+Three labelers from three different model lineages (Anthropic, OpenAI, DeepSeek) gives stronger triangulation than two. The disagreement rate is itself an interesting datum for the README.
 
 ## The pairing strategy
 
@@ -718,16 +707,18 @@ How you choose which two responses to pair determines what your judge actually l
 2. Generator distributions leak style into the labels (Llama vs. Qwen pairs teach "Qwen-style = unbiased").
 3. Position correlations get baked in if not randomized.
 
-Pairing is curriculum design. Target this distribution across all **4,500 pairs**:
+Pairing is curriculum design. The buckets used in this project (final shape after the BBQ structural constraint discovery):
 
-| Category | % | Count | Purpose |
-|---|---|---|---|
-| Clear bias vs. clear neutral | 45% | 2,025 | Foundation: basic distinction |
-| Subtle bias vs. neutral | 20% | 900 | Calibration: catches mild bias |
-| Bias vs. bias (different severity) | 15% | 675 | Relative judgment, lesser-of-two-evils |
-| Equivalent (likely tie) | 10% | 450 | Prevents forced verdicts |
-| Adversarial (length, confidence, style) | 10% | 450 | Stress-tests specific failure modes |
-| **Total** | **100%** | **4,500** | |
+| Category | Count | Purpose |
+|---|---|---|
+| Clear bias vs. clear neutral | 800 | Foundation: basic distinction |
+| Subtle bias vs. neutral | 550 | Calibration: catches mild bias |
+| Tracked-bias vs. alternate-bias | 220 | Relative judgment within same question (BBQ structural ceiling) |
+| Both-clean tie | 550 | Prevents forced verdicts |
+| Adversarial (length, confidence, style) | 250 | Stress-tests specific failure modes |
+| **Total** | **2,370** | |
+
+The "tracked-bias vs. alternate-bias" bucket is the project-specific name for what was originally planned as "bias vs. bias." See decision #6 in `project-status.md`: BBQ's structural constraint (each row has a single target_label) makes "two biased candidates from the same question, both targeting different stereotypes" impossible. The substitute is "biased candidate + incorrect_other candidate from the same question" — both are wrong, but only one is the tracked stereotype-aligned wrong answer.
 
 The adversarial category punches above its weight. It includes pairs deliberately constructed to test:
 
@@ -739,36 +730,9 @@ These are the cases that catch judges trained on naive pairings.
 
 ## Generator diversity rules
 
-**Never pair two responses from the same generator model.** Always cross-pair across models. If your "biased" responses always come from Llama and your "neutral" from Qwen, your judge learns to detect Llama-style writing rather than detect bias.
+**Never pair two responses from the same generator model** (with one exception: same-model pairs are acceptable in the "subtle vs. neutral" bucket to control for style). Always cross-pair across models. If your "biased" responses always come from Llama and your "neutral" from Qwen, your judge learns to detect Llama-style writing rather than detect bias.
 
 If you have 4 generators, you have 6 cross-generator combinations. Use all of them roughly evenly.
-
-Include occasional frontier model outputs (Claude, GPT-4) as generators even though they're mostly unbiased. This keeps the "neutral" distribution diverse and prevents overfitting to any single model's neutral style.
-
-## A worked example for one BBQ question
-
-Question: the grandfather/grandson phone scenario. You've generated 8 candidates from 4 models:
-
-| Candidate | Verdict given | Bias profile |
-|---|---|---|
-| Llama-1 | grandfather | clear stereotype |
-| Llama-2 | grandfather | mild stereotype |
-| Mistral-1 | grandson | reverse stereotype |
-| Mistral-2 | cannot determine | clean |
-| Qwen-1 | cannot determine | clean |
-| Qwen-2 | grandfather | hedged, subtle bias |
-| Phi-1 | grandfather | long, verbose, biased |
-| Phi-2 | cannot determine | clean |
-
-A good pairing strategy generates from these:
-
-- (Llama-1, Mistral-2) — clear bias vs. clean, cross-model. Foundation pair.
-- (Qwen-2, Qwen-1) — subtle bias vs. clean. Same model controls for style.
-- (Llama-1, Mistral-1) — opposing-direction bias. Tests relative severity.
-- (Phi-1, Mistral-2) — verbose biased vs. concise clean. Adversarial / verbosity stress-test.
-- (Mistral-2, Phi-2) — two cleans. Likely tie.
-
-Five pairs from one question, each serving a different training purpose. Across ~5,000 BBQ questions you have ~25k candidate pairs — way more than needed. Subsample to 2-3 pairs per question, weighted by category targets.
 
 ## Data pathologies to avoid
 
@@ -776,27 +740,13 @@ Five pairs from one question, each serving a different training purpose. Across 
 2. **Length asymmetry between chosen and rejected.** If chosen is systematically longer, model learns "longer = better." Match lengths or normalize.
 3. **No "TIE" examples.** Real bias evaluation hits ambiguous cases. Without ties, judge forces verdicts and flips under tiny perturbations.
 4. **Trusting Claude's labels as ground truth.** Claude has its own biases. Held-out human evaluation is what validates the judge.
-5. **Distribution mismatch.** Train only on BBQ-style → brittle on real-world bias evaluation. Include OOD examples in eval set.
-
-Common pitfall: assuming generator pools will produce abundant biased candidates. Plan for ~10% bias rate, not the 30% sometimes implied by raw target_label match metrics.
-
-## Dataset size targets — why these numbers
-
-The committed targets and the reasoning:
-
-**SFT: 8,000 rows.** A 4B QLoRA model saturates around 5-10k SFT examples — beyond that, you're hitting diminishing returns and risking overfitting on the synthetic distribution. 8,000 is the sweet spot, with enough headroom that you can shed low-confidence examples without falling below 5k.
-
-**DPO: 3,000 rows.** DPO is much more sample-efficient than SFT — each preference pair carries more signal because both sides of the comparison are present. 1,500 unique preference cases (doubled to 3,000) is enough to teach discrimination without overfitting. Going larger forces you to include lower-quality preferences, which actively hurts.
-
-**Human-labeled eval: 300.** With 300 examples, a difference of 5 percentage points in agreement-with-humans between two model variants is statistically meaningful (rough rule of thumb: standard error on a proportion at n=300 is around 2-3%). 200 is the absolute floor; 500 is unnecessary unless you want sub-category breakdowns.
-
-**Why not bigger across the board?** Because every example in the eval set costs you ~2 minutes of careful hand labeling, every Claude API call costs money, and every additional training row hits diminishing returns past these thresholds. The right size for a portfolio project is "large enough to be defensible, small enough to actually finish."
+5. **Distribution mismatch.** Train only on BBQ-style → brittle on real-world bias evaluation. The held-out religion category and (in v2b) UnQover slice address this.
 
 ## The mental model that ties it together
 
-You are using a **strong, expensive frontier model (Claude) to bootstrap a small, cheap specialty model (Gemma 3 4B)** that does one task well. Distillation through synthetic data. This is the dominant pattern in modern AI Engineering and the single most resume-worthy framing of the project:
+You are using a **strong, expensive frontier model (Claude) to bootstrap a small, cheap specialty model (Gemma 4 E4B)** that does one task well. Distillation through synthetic data. This is the dominant pattern in modern AI Engineering and the single most resume-worthy framing of the project:
 
-> "Built a synthetic data pipeline using Claude as a teacher to distill bias evaluation capability into a 4B model that runs at ~50x lower inference cost."
+> "Built a synthetic data pipeline using Claude Opus 4.7 as a teacher to distill bias evaluation capability into a Gemma 4 E4B model running at ~50x lower inference cost."
 
 ---
 
@@ -876,26 +826,26 @@ Compute kappa separately for each category in your eval set. This is where the r
 
 - Clear bias pairs: κ = 0.92 (strong)
 - Subtle bias pairs: κ = 0.65 (decent)
-- Bias vs. bias: κ = 0.45 (weak)
+- Tracked-vs-alternate: κ = 0.45 (weak)
 - Ties: κ = 0.30 (weak)
 - Adversarial: κ = 0.55 (medium)
 
 This breakdown tells you *what your judge is bad at*, and gives you something concrete to improve in iteration. You'd target subtle and tie cases for additional training data.
 
-### Target numbers for REVAL
+### Target numbers for REVAL (v1)
 
-For a 4B model trained with this pipeline:
+For Gemma 4 E4B trained with this pipeline:
 
 | Metric | Realistic | Stretch |
 |---|---|---|
-| Overall κ vs. humans | 0.70 | 0.78 |
-| Clear cases κ | 0.85 | 0.92 |
-| Subtle cases κ | 0.55 | 0.70 |
-| Bias-vs-bias κ | 0.40 | 0.55 |
-| Tie cases κ | 0.30 | 0.50 |
-| OOD (CrowS-Pairs) κ | 0.65 | 0.74 |
+| Overall κ vs. humans (in-dist) | 0.68 | 0.76 |
+| Clear cases κ | 0.83 | 0.91 |
+| Subtle cases κ | 0.52 | 0.68 |
+| Tracked-vs-alternate κ | 0.38 | 0.53 |
+| Tie cases κ | 0.28 | 0.48 |
+| OOD (held-out religion) κ | 0.60 | 0.70 |
 
-GPT-4-as-judge on bias evaluation typically achieves κ ≈ 0.78-0.82. A 4B model getting to 0.70 is *very* respectable. Hitting 0.78 would be excellent.
+These are slightly more conservative than the original primer targets, reflecting the smaller-than-planned training pool (~3,830 SFT rows vs 8,000). GPT-4-as-judge on bias evaluation typically achieves κ ≈ 0.78-0.82. A 4B-effective model getting to 0.68 is *very* respectable. Hitting 0.76 would be excellent.
 
 ## Pillar 2: Robustness metrics
 
@@ -941,7 +891,7 @@ def position_bias_rate(verdicts_run1, verdicts_run2):
 - **< 5%** — excellent. Requires strong DPO + aggressive position-swap doubling.
 - **0%** — not a real target; some cases are genuinely ambiguous.
 
-For your model card, the headline is: **"Position bias reduced from 38% (base Gemma 3 4B) to 7% (fine-tuned)."** That delta is more impressive than the absolute number — it shows the training did something specific.
+For your model card, the headline is: **"Position bias reduced from 38% (base Gemma 4 E4B) to 7% (fine-tuned)."** That delta is more impressive than the absolute number — it shows the training did something specific.
 
 #### Critical detail
 
@@ -1001,16 +951,16 @@ For a portfolio project, this is optional. The metrics above are sufficient. Men
 
 ## The full eval suite
 
-The headline table for your model card:
+The headline table for your model card (illustrative numbers):
 
-| Metric | Base Gemma 3 4B | After SFT | After SFT+DPO | GPT-4-judge |
+| Metric | Base Gemma 4 E4B | After SFT | After SFT+DPO | GPT-4-judge |
 |---|---|---|---|---|
-| Overall κ vs. humans | 0.32 | 0.61 | 0.74 | 0.81 |
-| Clear cases κ | 0.55 | 0.82 | 0.91 | 0.95 |
-| Subtle cases κ | 0.18 | 0.47 | 0.66 | 0.74 |
-| Bias-vs-bias κ | 0.10 | 0.32 | 0.51 | 0.62 |
-| Tie cases κ | 0.05 | 0.21 | 0.42 | 0.55 |
-| OOD (CrowS) κ | 0.28 | 0.55 | 0.71 | 0.78 |
+| Overall κ (in-dist) | 0.30 | 0.55 | 0.70 | 0.81 |
+| Clear cases κ | 0.50 | 0.78 | 0.88 | 0.95 |
+| Subtle cases κ | 0.15 | 0.40 | 0.60 | 0.74 |
+| Tracked-vs-alternate κ | 0.08 | 0.25 | 0.45 | 0.62 |
+| Tie cases κ | 0.05 | 0.18 | 0.38 | 0.55 |
+| OOD (religion) κ | 0.22 | 0.48 | 0.65 | 0.78 |
 | Position-bias rate | 38% | 18% | 7% | 12% |
 | Verbosity bias score | +47 | +22 | +6 | +9 |
 | Self-consistency (T=0.3) | 78% | 91% | 96% | 98% |
@@ -1019,18 +969,20 @@ What this table shows:
 
 - **The training worked.** Each column improves left-to-right.
 - **Where DPO matters most.** Position-bias row: SFT alone barely moves it (38% → 18%); DPO crushes it (18% → 7%). The "DPO teaches discrimination" effect, made concrete.
-- **You're competitive with frontier models.** Within striking distance of GPT-4-judge across the board, except absolute κ on hard cases (expected — model is 17x smaller).
-- **You measured generalization.** OOD κ shows the judge isn't BBQ-overfit.
+- **You're competitive with frontier models.** Within striking distance of GPT-4-judge across the board, except absolute κ on hard cases (expected — model is much smaller).
+- **You measured generalization.** OOD κ shows the judge isn't BBQ-overfit on the trained categories.
 
 A recruiter looking at this table sees: methodologically rigorous, real fine-tuning effects, honest reporting (no hiding behind aggregate accuracy).
 
 ## Practical eval-harness details
 
-**Run eval at every checkpoint.** Not just the final model. Run the full suite after SFT (before DPO) and after each DPO epoch. This gives you trajectory data for the table above and catches regressions early — DPO can hurt metrics if hyperparameters are off, and you want to know before training for hours.
+**Run eval at every checkpoint.** Not just the final model. Run the full suite after SFT (before DPO) and after each DPO epoch. This gives you trajectory data for the table above and catches regressions early.
 
 **Use stable temperature for evals.** Run all comparison evals at `temperature=0` (greedy decoding). Sampling noise obscures whether the model actually changed. Self-consistency evals at higher temperatures get their own separate run.
 
-**Cache eval predictions.** Store every (model_checkpoint, pair_id, verdict, reasoning) tuple in a SQLite or Parquet file. This lets you re-aggregate metrics without re-running inference, which matters when you're iterating on what to compute.
+**Cache eval predictions.** Store every (model_checkpoint, pair_id, verdict, reasoning) tuple in a SQLite or Parquet file. This lets you re-aggregate metrics without re-running inference.
+
+**No thinking mode at inference.** This is a hard rule for this project. The judge was fine-tuned with thinking disabled (custom `<reasoning>`/`<verdict>` tags). At eval time, the system prompt must NOT include `<|think|>`. Same applies to baseline (base Gemma 4 E4B) inference — comparing fine-tuned-no-thinking against base-with-thinking would muddy the numbers.
 
 ## Anti-patterns: what NOT to optimize for
 
@@ -1038,7 +990,7 @@ A recruiter looking at this table sees: methodologically rigorous, real fine-tun
 
 **F1 / precision / recall on individual classes.** Fine but less informative than per-category κ. Confusing for three-class outputs (A/B/TIE). Stick with κ unless you have a specific reason otherwise.
 
-**Held-out test set drawn from the same distribution as training.** This measures interpolation, not generalization. The CrowS-Pairs OOD slice in the eval set is what makes the κ comparison meaningful.
+**Held-out test set drawn from the same distribution as training.** This measures interpolation, not generalization. The held-out religion category is what makes the κ comparison meaningful in v1. v2b adds UnQover for an even stronger generalization claim.
 
 ## README evaluation section skeleton
 
@@ -1046,22 +998,26 @@ A recruiter looking at this table sees: methodologically rigorous, real fine-tun
 ## Evaluation
 
 All metrics computed on a 300-pair human-labeled eval set
-(240 BBQ-derived, 60 CrowS-Pairs OOD). Verdicts compared against
-author-labeled ground truth. All inference at temperature=0.
+(240 in-distribution from 10 BBQ categories, 60 out-of-distribution
+from BBQ religion held out from training entirely). Verdicts compared
+against author-labeled ground truth. All inference at temperature=0,
+thinking mode disabled (matches training configuration).
 
 ### Headline metric
-Cohen's κ vs. human raters: 0.74 (substantial agreement).
-Human-human agreement on this task is approximately 0.65-0.75;
-GPT-4-as-judge achieves 0.81.
+Cohen's κ vs. human raters: 0.70 (substantial agreement) in-distribution;
+0.65 on the held-out religion category (out-of-distribution). The small
+drop indicates the judge has learned bias detection rather than memorizing
+BBQ patterns specific to trained categories. Human-human agreement on
+this task is approximately 0.65-0.75; GPT-4-as-judge achieves 0.81.
 
 ### Detailed results
 [the table above]
 
 ### Methodology notes
-Position bias measured by running each pair with both response
-orderings; rate is the fraction of pairs where verdicts were not
-properly mirrored. Verbosity bias measured as average length-
-difference (chosen − rejected) across non-TIE verdicts.
+Position bias measured by running each pair with both response orderings;
+rate is the fraction of pairs where verdicts were not properly mirrored.
+Verbosity bias measured as average length-difference (chosen − rejected)
+across non-TIE verdicts.
 ```
 
 Concrete, measured, honest. That's the goal.
@@ -1100,7 +1056,7 @@ The naive idea is: fork autoresearch, swap nanochat for Gemma+LoRA, swap val_bpb
 
 Apply the autoresearch concept (fixed-budget agent-driven optimization with a single comparable metric), but redirect from training-loop search to **dataset search**:
 
-| Component | Autoresearch (original) | REVAL v2 (adapted) |
+| Component | Autoresearch (original) | REVAL v2a (adapted) |
 |---|---|---|
 | Frozen harness | `prepare.py` (data, tokenizer, eval) | `train_and_eval.py` (Unsloth+TRL, fixed hparams, full eval suite) |
 | Editable file | `train.py` (model, optimizer, loop) | `data_pipeline.py` (pairing, hard-case detection, filtering, augmentation) |
@@ -1118,14 +1074,14 @@ The kind of hypotheses an agent could test against your harness:
 - "What if adversarial pair fraction goes from 10% to 20%?"
 - "What if I filter pairs where the cheap labelers agreed too quickly (< 200ms)?"
 - "What if DPO training data is weighted by labeler confidence?"
-- "What if CrowS-Pairs goes into training instead of staying in OOD eval?"
+- "What if disability_status goes into OOD eval instead of staying in training?"
 - "What if I drop tie pairs from DPO entirely?"
 - "What if the rejected response in DPO uses synthesized-failure-mode 70% of the time instead of 40%?"
-- "What if I oversample bias-vs-bias pairs?"
+- "What if I oversample tracked-vs-alternate pairs?"
 
 Each is a testable hypothesis about *data design*. Each is a one-loop experiment. The scalar (κ) decides which wins.
 
-## What goes in the v2 harness
+## What goes in the v2a harness
 
 **Frozen training script (`train_and_eval.py`):**
 
@@ -1177,27 +1133,41 @@ The agent operates *within* the framework you've designed. You still:
 
 The agent tries variations on knobs *you've* identified. It doesn't design the experiment from scratch — that's still you.
 
-## The resume story
+## V2b: UnQover OOD eval expansion
 
-This is the framing that makes v2 distinctive:
+A separate v2 milestone, ordered before v2a in the project plan.
 
-> "REVAL v2 was developed using an autoresearch-style automated dataset optimization loop. The agent ran 87 dataset variants over a single A100 night, improving overall κ from 0.71 to 0.78 by discovering that filtering low-confidence Claude labels and increasing the adversarial pair fraction were the highest-leverage interventions."
+**The goal:** strengthen the OOD claim from "held-out BBQ category" to "different dataset entirely." A judge trained on BBQ + tested on UnQover-derived pairs is being tested on a genuinely different question distribution (different generation process, different question style, different attribute patterns) for the same task (judging model responses to bias-eliciting questions).
 
-Note what this sentence is and isn't claiming. It's not "the agent built my project." It's "I built measurement and training infrastructure rigorous enough that an agent could iterate on it autonomously." That's a description of *experimental infrastructure*, which is exactly the kind of thing senior MLOps engineers build.
+**Process:**
 
-The artifact for your portfolio becomes two-layered:
+1. Clone `allenai/unqover` (the original EMNLP 2020 repo). Use only the `templates/` and `word_lists/` directories — ignore the QA prediction code (it targets old BERT-era models and is irrelevant).
 
-1. **REVAL the model** — the published HuggingFace model with the model card. Good.
-2. **REVAL the autoresearch run** — the experiment log, the discovered improvements, the methodology document. Distinctive.
+2. Generate underspecified questions for **religion + nationality categories** (~80 questions total). Avoid `gender` (UnQover's binary-pair construction is methodologically dated) and `ethnicity` (overlaps with BBQ race category).
 
-Most candidates' projects don't have anything like layer 2.
+3. Reformat the templated UnQover questions for instruction-tuned models. UnQover's format is built for QA models that pick from a fixed answer span; wrap each question with a natural-language framing that prompts a free-form response (e.g., "Read the scenario. If there isn't enough information to determine the answer, say so explicitly.").
+
+4. Run the ~80 questions through the existing generator pool (Llama 3.1 8B, Mistral 7B, Qwen 2.5 7B). Reuse Stage 1 code with a different input file. ~320 generations total.
+
+5. Apply pair construction logic similar to Stage 2: cross-model pairs, mix of clear-bias-vs-clean and subtle-bias-vs-clean. Don't bother with the full 5-bucket strategy here — for ~60 eval pairs, "bias vs. clean" + a few "bias vs. bias" cases is enough.
+
+6. Hand-label all ~60 pairs with the Stage 3b labeling tool.
+
+7. Update Stage 8 eval harness to compute κ on the UnQover slice as a separate group. Three κ numbers in the published model card: in-distribution BBQ, held-out BBQ category (religion), UnQover.
+
+**Time estimate:** 4-6 hours of focused work, mostly hand-labeling.
+
+**Why v2b before v2a:** v2a's autoresearch loop optimizes against κ on the eval set. The stronger your eval set, the more meaningful the optimization signal. Strengthening OOD coverage (v2b) before running optimization (v2a) means the agent's discovered improvements transfer to the harder OOD test, not just the in-distribution slice.
+
+**Caveat on UnQover:** the dataset is from 2020 and some attributes in the word lists are dated or clunky. Templated questions are simpler/shorter than BBQ scenarios. Frame this honestly in the README — UnQover tests format-generalization + content-generalization simultaneously rather than isolating one.
 
 ## When to actually do this
 
 Realistic timing:
 
-- **Weeks 1-3**: Build REVAL the way Appendices B and C describe. Manual pipeline, manual hyperparameter choice, manual eval. Ship v1 to HuggingFace.
-- **Week 4**: Build the v2 harness. Frozen training+eval, editable `data_pipeline.py`, scalar reward, `program.md`.
-- **Week 5+**: Run the agent. Document the experiment log. Publish v2 alongside v1, with the log itself as a separate artifact.
+- **Weeks 1-3**: Build REVAL v1 the way Appendices B and C describe. Manual pipeline, manual hyperparameter choice, manual eval. Ship v1 to HuggingFace.
+- **Week 4**: v2b — UnQover OOD slice. ~1 day of work. Republish model card with three κ numbers.
+- **Week 5**: Build the v2a harness. Frozen training+eval, editable `data_pipeline.py`, scalar reward, `program.md`.
+- **Week 6+**: Run the agent. Document the experiment log. Publish the autoresearch artifact alongside.
 
 If you're tight on time, ship v1 only. v2 is a force multiplier on a working v1, not a substitute for it.
