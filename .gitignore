@@ -33,6 +33,8 @@ data/formatted/*.jsonl
 # These cost real API spend / pin reproducibility, so they live in git.
 !data/raw/bbq_sample.jsonl
 !data/raw/candidates.jsonl
+!data/raw/candidates_enriched.jsonl
+!data/pairs/pairs.jsonl
 
 # Model checkpoints and adapters
 *.safetensors

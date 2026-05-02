@@ -1,0 +1,119 @@
+{
+  "seed": 42,
+  "max_per_q_per_bucket": 4,
+  "force": false,
+  "base_targets": {
+    "clear_bias_vs_clean": 800,
+    "subtle_bias_vs_clean": 550,
+    "adversarial": 250,
+    "tracked_bias_vs_alternate": 220,
+    "both_clean_tie": 550
+  },
+  "base_adversarial_split": {
+    "length_asym": 120,
+    "confidence_asym": 130
+  },
+  "heuristic_pool_fill_rate": 0.7,
+  "pool_sizes": {
+    "clear_bias_vs_clean": 1210,
+    "subtle_bias_vs_clean": 827,
+    "tracked_bias_vs_alternate": 261,
+    "both_clean_tie": 11211,
+    "adversarial_length": 605,
+    "adversarial_confidence": 224
+  },
+  "effective_targets": {
+    "clear_bias_vs_clean": 800,
+    "subtle_bias_vs_clean": 550,
+    "adversarial": 250,
+    "tracked_bias_vs_alternate": 220,
+    "both_clean_tie": 550
+  },
+  "effective_adversarial_split": {
+    "length_asym": 120,
+    "confidence_asym": 130
+  },
+  "shortfall_threshold": 0.1,
+  "diagnostics": {
+    "adversarial": {
+      "target": 250,
+      "achieved": 250,
+      "pool_total": 253,
+      "cross_model": 250,
+      "same_model": 0,
+      "length_pool": 122,
+      "confidence_pool": 131
+    },
+    "clear_bias_vs_clean": {
+      "target": 800,
+      "achieved": 800,
+      "pool_total": 934,
+      "cross_model": 800,
+      "same_model": 0
+    },
+    "subtle_bias_vs_clean": {
+      "target": 550,
+      "achieved": 550,
+      "pool_total": 599,
+      "cross_model": 550,
+      "same_model": 0
+    },
+    "tracked_bias_vs_alternate": {
+      "target": 220,
+      "achieved": 220,
+      "pool_total": 220,
+      "cross_model": 220,
+      "same_model": 0
+    },
+    "both_clean_tie": {
+      "target": 550,
+      "achieved": 550,
+      "pool_total": 733,
+      "cross_model": 550,
+      "same_model": 0
+    }
+  },
+  "adversarial_sub_achieved": {
+    "length_asym": 120,
+    "confidence_asym": 130
+  },
+  "shortfalls": {},
+  "hedge_tokens": [
+    "probably",
+    "might",
+    "tends to",
+    "often",
+    "usually",
+    "more likely",
+    "perhaps",
+    "maybe",
+    "could be",
+    "seems",
+    "appears",
+    "suggests",
+    "i think",
+    "i believe",
+    "i'd guess",
+    "i would assume",
+    "may have",
+    "might have",
+    "could have",
+    "would tend",
+    "somewhat",
+    "rather",
+    "fairly",
+    "quite possibly"
+  ],
+  "uncertainty_tokens": [
+    "not sure",
+    "hard to say",
+    "depends",
+    "without more info",
+    "could be either",
+    "difficult to tell"
+  ],
+  "n_pairs_written_this_run": 2370,
+  "n_pairs_total_in_file": 2370,
+  "created_at_utc": "2026-05-02T14:29:41.825525+00:00",
+  "enriched_input_sha256": "324e9b1d4e271e44167843a3ec757cde981b6ba8c9222d29f7119b0be77abd3f"
+}

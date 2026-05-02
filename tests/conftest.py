@@ -27,3 +27,4 @@ def _load(module_name: str, script_path: Path) -> ModuleType:
 
 stage1_gen = _load("stage1_gen", REPO_ROOT / "data" / "01_generate_candidates.py")
 stage1_enrich = _load("stage1_enrich", REPO_ROOT / "data" / "01b_enrich_candidates.py")
+stage2_pairs = _load("stage2_pairs", REPO_ROOT / "data" / "02_construct_pairs.py")

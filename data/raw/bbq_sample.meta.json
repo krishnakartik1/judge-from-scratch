@@ -1,7 +1,7 @@
 {
   "seed": 42,
   "n_rows_target": 1500,
-  "n_rows_actual": 1500,
+  "n_rows_actual": 3000,
   "per_cell_counts": {
     "age": {
       "ambig/neg": 34,
@@ -72,5 +72,14 @@
   },
   "warnings": [],
   "sampled_at_utc": "2026-04-26T14:16:39.479853+00:00",
-  "bbq_dataset_revision": "56cd2dcb60a10288b4f1a9c8cff6cf120141c08a"
+  "bbq_dataset_revision": "56cd2dcb60a10288b4f1a9c8cff6cf120141c08a",
+  "expansions": [
+    {
+      "expansion_seed": 43,
+      "n_additional": 1500,
+      "n_total_after_expansion": 3000,
+      "expanded_at_utc": "2026-05-02T14:16:01.977706+00:00",
+      "warnings": []
+    }
+  ]
 }
