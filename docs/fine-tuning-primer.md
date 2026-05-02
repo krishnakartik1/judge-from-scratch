@@ -778,6 +778,8 @@ Five pairs from one question, each serving a different training purpose. Across 
 4. **Trusting Claude's labels as ground truth.** Claude has its own biases. Held-out human evaluation is what validates the judge.
 5. **Distribution mismatch.** Train only on BBQ-style → brittle on real-world bias evaluation. Include OOD examples in eval set.
 
+Common pitfall: assuming generator pools will produce abundant biased candidates. Plan for ~10% bias rate, not the 30% sometimes implied by raw target_label match metrics.
+
 ## Dataset size targets — why these numbers
 
 The committed targets and the reasoning:
