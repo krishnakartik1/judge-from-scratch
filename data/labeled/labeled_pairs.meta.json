@@ -1,0 +1,53 @@
+{
+  "dryrun": {
+    "status": "complete",
+    "decision": "PROCEED",
+    "completed_at": "2026-05-03T15:07:31.956103+00:00",
+    "sonnet_spend_usd": 0.214926,
+    "opus_spend_usd": 1.042155
+  },
+  "primary": {
+    "status": "complete",
+    "model": "claude-sonnet-4-6",
+    "count": 1937,
+    "verdicts": {
+      "A": 591,
+      "B": 626,
+      "TIE": 720
+    },
+    "confidence": {
+      "1": 0,
+      "2": 15,
+      "3": 185,
+      "4": 441,
+      "5": 1296
+    },
+    "spend_usd": 11.979208,
+    "prompt_sha": "6b6f1afa728a42876674e6f89562414f9c9f34e4e6109351b45570b769d91431",
+    "output_sha": "c2736ae56f428164e35a2becfa23ee9b1a895d67cf8f6d7458e859ad0f077964",
+    "completed_at": "2026-05-03T15:23:11.040863+00:00",
+    "pricing_as_of": "2026-05-02",
+    "dropped_count": 1,
+    "dropped_artifact": "data/labeled/dropped_pairs.jsonl"
+  },
+  "crosscheck": {
+    "status": "complete",
+    "n_disagreement": 87,
+    "spend_usd": 14.341694,
+    "completed_at": "2026-05-03T19:39:03.403341+00:00",
+    "output_sha": "ceaab2a79c5d6e933159dd2bdb516c434947ef7e915fdb75fab9cc87a36266f6",
+    "pricing_as_of": "2026-05-02",
+    "n_crosscheck_b": 500,
+    "n_crosscheck_c": 494,
+    "labelers": {
+      "b": {
+        "role": "openai_batch",
+        "model": "gpt-5.4"
+      },
+      "c": {
+        "role": "openrouter_async",
+        "model": "qwen/qwen3-235b-a22b-2507"
+      }
+    }
+  }
+}

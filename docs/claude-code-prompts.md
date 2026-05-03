@@ -326,19 +326,27 @@ Stopping and resuming should be easy.
 ```
 Build Stage 4 of the data pipeline: Claude labeling.
 
-Read docs/fine-tuning-primer.md Appendix B sections on Stage 3
-labeling, "Hard cases and tiered labeling," and "Recommendation"
-about cross-checking with GPT-5.4 + DeepSeek V3.1 on 500 pairs.
+Read docs/fine-tuning-primer.md, especially Appendix B sections on
+Stage 3 labeling and "Hard cases and tiered labeling." Also read
+docs/project-status.md decisions #16 (answer_choices schema) and
+#17 (Sonnet 4.6 primary labeler).
 
 NOTE: I will write the labeling prompt myself. Look for it at
-data/labeling_prompt.md. Use it as-is. Do not generate or modify it.
+data/labeling_prompt.md. Use it as-is. Do not generate or modify
+it. The prompt MUST render the answer_choices field from each pair
+record into its question framing — verify this is the case before
+the dry-run. If labeling_prompt.md does not reference
+answer_choices, abort and tell me to fix it first.
 
 Write data/04_label_pairs.py:
 
-INPUT: data/pairs/pairs_to_label.jsonl.
+INPUT: data/pairs/pairs_to_label.jsonl. Each pair record now has
+an answer_choices field (per decision #16). The labeling code must
+pass answer_choices into the prompt template alongside
+question_text, response_a, and response_b.
 
 PRIMARY LABELING:
-- Anthropic API with model claude-opus-4-7.
+- Anthropic API with model claude-sonnet-4-6 (verified API model ID).
 - Batch API for 50% cost reduction.
 - Prompt caching: system prompt and labeling instructions cached;
   only per-pair content is fresh.
@@ -348,29 +356,82 @@ PRIMARY LABELING:
 
 CROSS-CHECK LABELING:
 - After primary labeling, identify 500 pairs from the subtle/tie/
-  adversarial categories.
-- Run those through OpenAI API (gpt-5.4 — verify exact model name
-  with `web_search` if needed) using the same prompt.
-- ALSO run those same 500 pairs through DeepSeek V3.1 via Together
-  AI. Use Together's Batch API for 50% discount.
+  tracked-vs-alternate/adversarial categories. Stratify across
+  these four buckets proportionally so no single category dominates.
+- Run those 500 through OpenAI API (gpt-5.4 — verify exact model
+  name with `web_search` before running).
+- ALSO run those same 500 through DeepSeek V3.1 via Together AI.
+  Use Together's Batch API for 50% discount.
 - Flag pairs where any of the three labelers disagree.
 - Cost estimate: GPT-5.4 ~$3, DeepSeek V3.1 ~$1.
 
 OUTPUT: data/labeled/labeled_pairs.jsonl. One record per pair:
 {
-  pair_id, ...original fields...,
-  claude_verdict, claude_reasoning, claude_confidence,
+  pair_id, ...original fields including answer_choices...,
+  sonnet_verdict, sonnet_reasoning, sonnet_confidence,
   gpt_verdict (null if not cross-checked), gpt_reasoning,
   deepseek_verdict (null if not cross-checked), deepseek_reasoning,
   disagreement (bool, true if any pair of labelers disagreed
                 on cross-checked rows)
 }
 
-ALSO: 50-pair dry run first. Show me the cost actually charged,
-the first 5 labeled records, and the confidence distribution. Wait
-for confirmation before running on the full set.
+Use field names sonnet_verdict / sonnet_reasoning / sonnet_confidence
+(not claude_*) so the schema is unambiguous about which model
+produced the primary label. Stage 5 formatting code will reference
+these field names.
 
-Budget guardrail: hard-stop and prompt me if total spend exceeds $30.
+DRY RUN — COMPARISON RUN:
+
+Before the full labeling run, validate that Sonnet 4.6 holds up
+against Opus 4.6 on this task. The cost saving (~$25 vs ~$8) is only
+worth taking if Sonnet's labels on the harder buckets are close to
+Opus's.
+
+1. Sample 50 pairs stratified to overweight hard cases:
+   - 30 from {subtle, tracked-vs-alternate, adversarial} (10 each)
+   - 20 from {clear, tie} (10 each)
+   Use seed=42.
+
+2. Run all 50 through BOTH:
+   - claude-sonnet-4-6 (Batch API, prompt caching enabled)
+   - claude-opus-4-6 (Batch API, prompt caching enabled)
+
+3. Compute and show me:
+   - Overall agreement rate (Sonnet verdict == Opus verdict).
+   - Agreement rate broken down by pair_category.
+   - Confidence distribution side-by-side per model.
+   - Total cost actually charged for each model (from response
+     headers).
+   - The first 5 labeled pairs from each model side-by-side, so I
+     can read the reasoning and judge quality directly.
+   - A list of every pair where Sonnet and Opus disagreed,
+     including both reasoning traces.
+
+DECISION GATE:
+- If overall agreement >= 90% AND hard-bucket agreement >= 75%:
+  proceed with Sonnet 4.6 as primary on the full 1,938 pairs.
+- If hard-bucket agreement falls below 70%: abort. Tell me, and
+  I'll decide whether to switch back to Opus or revisit the
+  labeling prompt.
+- If 70-75%: stop and show me the disagreements. I'll judge.
+
+Do not proceed past the dry run without my explicit confirmation.
+
+BUDGET GUARDRAIL:
+Hard-stop and prompt me if total spend across all labelers
+(Sonnet + Opus dry-run + GPT-5.4 + DeepSeek) exceeds $20.
+
+A note on the dry-run cost: 50 pairs × 2 models is roughly $1-2
+total at these prices, so the validation is genuinely cheap insurance.
+
+After the full primary labeling run completes, before kicking off
+cross-check, show me:
+- Total pairs labeled
+- Confidence distribution
+- Verdict distribution (A / B / TIE)
+- Total spend so far
+
+Wait for confirmation before launching cross-check.
 ```
 
 ---

@@ -1,0 +1,61 @@
+{
+  "n_v1": 50,
+  "n_v3": 50,
+  "n_common": 50,
+  "n_only_v1": 0,
+  "n_only_v3": 0,
+  "identical": 44,
+  "verdict_flipped": 0,
+  "confidence_shifted": 6,
+  "flip_pair_ids": [],
+  "flip_details": [],
+  "shift_details": [
+    {
+      "pair_id": "1f2591bcda6b7d28",
+      "pair_category": "tracked_bias_vs_alternate",
+      "verdict": "B",
+      "v1_confidence": 5,
+      "v3_confidence": 4
+    },
+    {
+      "pair_id": "5f9bce5c9042f8ff",
+      "pair_category": "clear_bias_vs_clean",
+      "verdict": "B",
+      "v1_confidence": 5,
+      "v3_confidence": 4
+    },
+    {
+      "pair_id": "866782a72ac1a320",
+      "pair_category": "tracked_bias_vs_alternate",
+      "verdict": "A",
+      "v1_confidence": 3,
+      "v3_confidence": 4
+    },
+    {
+      "pair_id": "9eb5ac14279b8689",
+      "pair_category": "tracked_bias_vs_alternate",
+      "verdict": "A",
+      "v1_confidence": 4,
+      "v3_confidence": 3
+    },
+    {
+      "pair_id": "a72cf8f381e6d913",
+      "pair_category": "both_clean_tie",
+      "verdict": "TIE",
+      "v1_confidence": 3,
+      "v3_confidence": 4
+    },
+    {
+      "pair_id": "d9030de706fa2fc0",
+      "pair_category": "adversarial",
+      "verdict": "A",
+      "v1_confidence": 4,
+      "v3_confidence": 3
+    }
+  ],
+  "flip_gate": {
+    "decision": "PASS",
+    "message": "verdict-flip rate 0/50 = 0.0% \u2264 10.0% threshold",
+    "max_flip_rate": 0.1
+  }
+}

@@ -17,6 +17,7 @@ dependencies = [
     "bitsandbytes",
     "openai",
     "anthropic",
+    "together",
     "python-dotenv",
     "scikit-learn",
     "pandas",

@@ -34,9 +34,9 @@ Read that before doing substantive work.
 - [ ] Stage 1: candidate generation
 - [ ] Stage 2: pair construction
 - [ ] Stage 3a: holdout eval set (data/03a_holdout_eval.py)
-- [ ] Stage 3: Claude labeling
-- [ ] Stage 4: dataset formatting
-- [ ] Stage 5: hand-labeling 300 eval pairs
+- [x] Stage 4: Claude labeling (data/04_label_pairs.py)
+- [ ] Stage 5: dataset formatting
+- [ ] Stage 6: hand-labeling 300 eval pairs
 - [ ] SFT training
 - [ ] DPO training
 - [ ] Eval harness + model card
@@ -44,7 +44,7 @@ Read that before doing substantive work.
 - [ ] GGUF export + Ollama Modelfile
 
 ## Pipeline wiring
-Stage 3 (Claude labeling) reads `data/pairs/pairs_to_label.jsonl`,
+Stage 4 (Claude labeling) reads `data/pairs/pairs_to_label.jsonl`,
 NOT `data/pairs/pairs.jsonl` — the holdout in Stage 3a is the canonical
 gate. Bypassing it leaks the human-eval pairs into training.
 
