@@ -1,7 +1,7 @@
 [project]
 name = "reval-judge"
 version = "0.1.0"
-description = "Fine-tuning Gemma 3 4B into a specialized bias evaluation judge for the REVAL framework."
+description = "judge-from-scratch — fine-tuning Gemma 4 E4B into a specialized social-bias evaluation judge."
 readme = "README.md"
 requires-python = "==3.11.*"
 authors = [

@@ -4,7 +4,7 @@
 
 Living document. Update after each stage completion or significant decision.
 
-Last updated: end of Stage 2 (pair construction); pivot to educational tutorial framing; renamed from REVAL Judge to judge-from-scratch.
+Last updated: end of Stage 5 (SFT/DPO formatting). Stages 3a, 4, and 5 complete; SFT pool 3,844 rows, DPO pool 2,200 rows shipped to `data/formatted/`.
 
 ---
 
@@ -36,10 +36,10 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 1 | BBQ sampling + candidate generation | ✅ Done |
 | 1.5 | Enrichment (bias classification) | ✅ Done |
 | 2 | Pair construction | ✅ Done |
-| 3a | Eval set holdout (BBQ in-dist + religion held-out OOD) | ⏳ Running |
+| 3a | Eval set holdout (BBQ in-dist + religion held-out OOD) | ✅ Done |
 | 3b | Hand-labeling tool + 300-pair manual labeling | ⏳ |
-| 4 | Claude labeling (primary + cross-check) | ⏳ |
-| 5 | SFT/DPO dataset formatting (custom tags, no thinking mode) | ⏳ |
+| 4 | Claude labeling (primary + cross-check) | ✅ Done |
+| 5 | SFT/DPO dataset formatting (custom tags, no thinking mode) | ✅ Done |
 | 6 | SFT training (Gemma 4 E4B QLoRA) | ⏳ |
 | 7 | DPO training | ⏳ |
 | 8 | Eval harness | ⏳ |
@@ -127,15 +127,17 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 21. **Cross-check complete** Sonnet primary + GPT-5.4 + Qwen 3 235B (via OpenRouter, not Together — Together's batch hung, OpenRouter completed 500 calls in 3 min for $0.07). 17.4% disagreement rate on hard buckets. Three-lineage triangulation preserved despite DeepSeek V3.1 swap (#20). Total Stage 4 spend: $14.34 of $20 cap.
 
 22. **DPO sourcing** synthesis (60-75%) + verdict-flip (25-40%), no cross-check supplement. Hand-review of 9 'both-cross-checkers-disagreed' pairs revealed a judging-philosophy gap, not Sonnet errors: Sonnet weights letter answers; GPT/Qwen weight reasoning chains. Cross-checker disagreements thus signal rubric difference, not weaker-model mistakes. Trained judge will inherit Sonnet's letter-aware rubric; documented as a deliberate choice in the model card. Stage 3b hand-labeling must apply the same rubric to avoid eval κ deflation.
+
+23. **Stage 5 shipped at 70/30 synth/flip mid-range.** Final SFT 3,844 rows (1,922 pairs × position-swap, 15 dropped at conf<3); DPO 2,200 rows (1,100 pool × swap; 1,558 synth + 642 flip). Total spend $2.05 / $15 cap (Sonnet 4.6 Batch API at 50% discount). Synth prompt was re-tuned mid-run from "~120 reasoning tokens" to "200-300 tokens (soft target)" — v1 produced rejecteds whose bottom decile sat entirely below chosen's bottom decile, opening a "shorter = rejected" verbosity-bias shortcut. v2 closed it: 0/779 synth records below chosen p10. Three synth rejecteds leaked the wrong-verdict instruction ("we need to say the verdict is B"); re-synthesized via the stricter retry suffix and merged under phase=`leak-retry`. Final verify gates: 0 `<|think|>` hits, 0 verdict-flip violations across all 2,200 DPO rows, chosen/rejected median ratio 0.90× (under 1.15× block threshold).
 ---
 
 ## Open threads / known constraints
 
 - **Tracked-bias vs alternate-bias is supply-bound at 220 pairs.** True ceiling, not a heuristic problem. Cannot expand without different question structure.
 
-- **Stage 4 labeling not yet started.** $20-30 estimated cost for Claude Opus 4.7 with Batch API + prompt caching. Plus optional ~$3 cross-check via GPT-5.4 + DeepSeek V3.1 on 500 ambiguous pairs.
+- ~~**Stage 4 labeling not yet started.**~~ Resolved: Stage 4 complete via Sonnet 4.6 primary + GPT-5.4 + Qwen 3 235B cross-check. Total spend $14.34 (decision #21).
 
-- **Stage 5b weaker labeling for DPO rejected** uses Qwen 2.5 7B via Together AI ($5 credit allocated).
+- ~~**Stage 5b weaker labeling for DPO rejected** uses Qwen 2.5 7B via Together AI.~~ Resolved: dropped per decision #22 in favor of Sonnet-synthesized hard negatives (cross-checker disagreements signal rubric divergence, not weaker-model mistakes). See decisions #22-23.
 
 - **Hand-labeling 300 eval pairs** is the next big time sink. 6-10 hours of careful manual work. Don't rush — this is the foundation of every reported metric.
 
@@ -143,9 +145,9 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 
 - **Stage 6+ VRAM expectations need re-baselining.** The primer's "8 GB fp16, 2 GB 4-bit" math was for plain Gemma 3 4B. Gemma 4 E4B has ~6.87B raw params; expect ~14 GB fp16, ~4 GB 4-bit. Unsloth says 12 GB+ VRAM works for QLoRA, free Colab T4 fits.
 
-- **Training pool below primer's "comfort floor."** Primer suggests ~5,000 SFT rows as a saturation-curve sweet spot; we're projecting ~3,876. Trainable but may underperform. The 5k number was a rough rule of thumb, not a measured threshold for this specific task. Eval results will tell us whether the pool size was the binding constraint or whether data quality compensates.
+- **Training pool below primer's "comfort floor."** Primer suggested ~5,000 SFT rows as a saturation-curve sweet spot; final SFT pool landed at 3,844 rows (1,922 unique pairs × position-swap). Trainable but may underperform. Eval results will tell us whether the pool size was the binding constraint or whether data quality compensates.
 
-- **Labeling prompt and judge system prompt are unwritten.** Stage 4 needs the labeling prompt; Stage 5 needs the judge system prompt. Both are user-authored artifacts. Drafting and iterating these (with manual calibration on 10 pairs) is on the critical path before Stage 4 dry-run can run.
+- ~~**Labeling prompt and judge system prompt are unwritten.**~~ Resolved: `data/labeling_prompt.md` authored for Stage 4 dryrun (decision #17 calibration); `data/judge_system_prompt.md` authored for Stage 5 (decision #23). Both shipped.
 
 - **HF Space (Tier 1 demo) deferred to Stage 11.** Reasons: ongoing hosting cost, would distract from getting the pipeline working end-to-end, Ollama covers most of the "try it" need without ongoing cost. Revisit after v1 ships.
 
@@ -166,12 +168,13 @@ These are the load-bearing documents. The chat conversations that produced them 
 
 ### Immediate
 
-Stage 3a is currently running. Completes the 300-pair eval set holdout (240 in-dist + 60 OOD religion).
+Stages 3a / 4 / 5 complete. Next on the critical path:
 
-While 3a runs:
-- Draft `data/labeling_prompt.md` (Stage 4 input). Iterate manually on 10 pairs to calibrate Claude's labels against your own judgments.
-- Draft `data/judge_system_prompt.md` (Stage 5 input). Should be much shorter than the labeling prompt — the trained model has learned the task; this just reminds it.
-- Verify the exact Unsloth model ID for Gemma 4 E4B fine-tuning by reading their gemma-4 collection on HF.
+- **Stage 3b** — hand-label the 300-pair eval set (240 in-dist + 60 OOD religion). 6-10 hours of careful manual work using `data/03b_label_tool.py`. This is the foundation of every reported eval κ in Stage 8, so don't rush.
+- **Stage 6** — SFT training of `unsloth/gemma-4-E4B-it` on `data/formatted/sft.jsonl` (3,844 rows). Dry-run on ~50 rows first per decision #12 before committing to full training. VRAM target: ~14 GB fp16, ~4 GB 4-bit on the Lambda Labs A100 80GB. Author `train/configs/sft.yaml`.
+- **Stage 7** — DPO training on `data/formatted/dpo.jsonl` (2,200 rows) starting from the Stage 6 SFT checkpoint.
+
+3b and 6 can run in parallel — 3b is your time, 6 is GPU time.
 
 ### v1 build (Stages 3b-10)
 
