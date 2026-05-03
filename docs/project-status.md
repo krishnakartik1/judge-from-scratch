@@ -114,6 +114,17 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 
 15. **Three deployment paths, not one.** Stage 9 publishes the model artifacts to HF; Stage 10 adds two deployment recipes for readers: Ollama (local, zero cost, ~10-min setup) and vLLM (production-pattern, OpenAI-compatible API, Docker). A third path — a hosted HF Space with Gradio UI for "click here to try it" — is deferred to Stage 11 to keep v1 scope bounded and avoid ongoing hosting costs while the pipeline is still being validated.
 
+16. **answer_choices field added to pair records.** Pair schema was missing BBQ answer choices, so downstream couldn't decode <answer>B</answer>. Fixed by joining on question_id; patched Stage 2, re-ran 2 + 3a, updated label_tool.py. Labeling prompt, judge system prompt, model card spec still need updating to render the field.
+
+17. **Switched primary labeler from Opus 4.7 to Sonnet 4.6.** Cost drops ~$25 → ~$8; Sonnet 4.6 is frontier-class for this task. 50-pair Opus-vs-Sonnet dry run gates the swap (≥90% overall, ≥75% hard-bucket agreement). Cross-check on 500 pairs unchanged. Update Stage 9 model card and primer Appendix B framing.
+
+18. **Cache_control moved from user-content to system block**. v1 placed cache_control on a 1,575-token user-message content block; produced cache_read=0 across batch. v3 moved the rubric into a system block (canonical batch-caching pattern). Revalidated on same 50 pairs: v3 49/50 vs Opus (v1: 47/50), zero verdict flips, 6 ±1 confidence shifts. Primary labels produced under v3. Caching still cache_read=0 — environmental issue, deferred.
+
+19. **One pair dropped from primary labeling**. Pair 96b558e0bf7cbd01 failed parsing twice with the same pattern: Sonnet emitted <thinking> tags (native mode) instead of <reasoning>, hit max_tokens=1024 before producing the verdict block. Deterministic, not transient. Dropped rather than patched to keep the 1,937 labels under one consistent configuration. Final labeled count: 1,937. SFT pool: ~3,874 rows pre-confidence-filter.
+
+20. **DeepSeek V3.1 disabled on Together account**. switched cross-check to Qwen 3 235B Instruct (Qwen/Qwen3-235B-A22B-Instruct-2507-tput). Different lineage (Alibaba), preserves three-labeler triangulation framing in model card.
+
+21. **Cross-check complete** Sonnet primary + GPT-5.4 + Qwen 3 235B (via OpenRouter, not Together — Together's batch hung, OpenRouter completed 500 calls in 3 min for $0.07). 17.4% disagreement rate on hard buckets. Three-lineage triangulation preserved despite DeepSeek V3.1 swap (#20). Total Stage 4 spend: $14.34 of $20 cap.
 ---
 
 ## Open threads / known constraints

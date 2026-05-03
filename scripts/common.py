@@ -8,6 +8,8 @@ Provides:
       enabling resumable pipeline stages.
     - atomic_write_json: tmp+rename write of a single JSON payload.
     - atomic_write_jsonl: tmp+rename write of a list of JSONL records.
+    - merge_jsonl_patches: merge per-key patches into a base JSONL via
+      atomic tmp+rename.
     - file_sha256: hex SHA-256 of a file's contents.
 """
 
@@ -128,6 +130,103 @@ def atomic_write_jsonl(path: Path | str, records: Iterable[dict[str, Any]]) -> N
             fh.write(json.dumps(record, ensure_ascii=False))
             fh.write("\n")
     tmp.replace(p)
+
+
+def merge_jsonl_patches(
+    base_path: Path | str,
+    patches_path: Path | str,
+    key_field: str,
+) -> dict[str, int]:
+    """Merge per-key patches into a base JSONL via atomic tmp+rename.
+
+    Reads ``base_path`` once, applies any matching patch from
+    ``patches_path`` (matched on ``key_field``), and writes the result
+    via tmp+rename so a crash mid-write leaves the base untouched.
+
+    Behavior:
+        - Output preserves the base file's record order.
+        - Patches whose key is NOT present in the base are dropped with a
+          ``WARNING`` log line listing each unmatched key (never silently
+          inserted, never lost without a log).
+        - When multiple patches share the same key, the last one wins
+          (logged at ``WARNING`` once per key).
+        - Each base record is updated via ``dict.update(patch)`` — top-level
+          keys in the patch overwrite top-level keys in the base; nested
+          dicts are not deep-merged.
+
+    Args:
+        base_path: JSONL file to patch (read-only until the final rename).
+        patches_path: JSONL file of patch records; each must contain
+            ``key_field``.
+        key_field: Name of the field used to match patch → base.
+
+    Returns:
+        ``{"base": N, "patches_applied": K, "patches_unmatched": U,
+        "duplicate_patches": D}`` for caller-side reconciliation.
+    """
+    base = Path(base_path)
+    patches = Path(patches_path)
+
+    patch_map: dict[str, dict[str, Any]] = {}
+    duplicates: dict[str, int] = {}
+    for record in jsonl_read(patches):
+        if key_field not in record:
+            logger.warning(
+                "Patch in %s missing key_field %r; skipping.",
+                patches,
+                key_field,
+            )
+            continue
+        key = str(record[key_field])
+        if key in patch_map:
+            duplicates[key] = duplicates.get(key, 1) + 1
+        patch_map[key] = record
+
+    for key, count in duplicates.items():
+        logger.warning(
+            "merge_jsonl_patches: %d patches for key %r; last one wins.",
+            count,
+            key,
+        )
+
+    tmp = base.with_name(base.name + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+
+    base_count = 0
+    applied = 0
+    matched_keys: set[str] = set()
+    with tmp.open("w", encoding="utf-8") as fh:
+        for record in jsonl_read(base):
+            base_count += 1
+            if key_field in record:
+                key = str(record[key_field])
+                if key in patch_map:
+                    record = {**record, **patch_map[key]}
+                    matched_keys.add(key)
+                    applied += 1
+            fh.write(json.dumps(record, ensure_ascii=False))
+            fh.write("\n")
+
+    unmatched = sorted(set(patch_map.keys()) - matched_keys)
+    if unmatched:
+        sample = unmatched[:10]
+        logger.warning(
+            "merge_jsonl_patches: %d patch key(s) not present in base; "
+            "dropped. First %d: %s",
+            len(unmatched),
+            len(sample),
+            sample,
+        )
+
+    tmp.replace(base)
+
+    return {
+        "base": base_count,
+        "patches_applied": applied,
+        "patches_unmatched": len(unmatched),
+        "duplicate_patches": len(duplicates),
+    }
 
 
 def file_sha256(path: Path | str) -> str:

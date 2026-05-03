@@ -43,6 +43,19 @@ data/formatted/*.jsonl
 !data/pairs/pairs_to_label.jsonl
 !data/pairs/pairs_unused_religion.jsonl
 
+# Stage 4 (Claude labeling) artifacts. The labeled training data and
+# audit trail (dryrun records, dropped pairs, cost ledger) are tracked
+# despite the broad data/labeled/*.jsonl ignore above. Provider-specific
+# in-flight state (.parse_errors.jsonl, crosscheck_results.jsonl) stays
+# ignored — those are transient sidecars, not durable artifacts.
+!data/labeled/labeled_pairs.jsonl
+!data/labeled/dropped_pairs.jsonl
+!data/labeled/dryrun_sonnet.jsonl
+!data/labeled/dryrun_opus.jsonl
+!data/labeled/dryrun_sonnet_v1.jsonl
+!data/labeled/dryrun_opus_v1.jsonl
+!data/labeled/.cost_ledger.jsonl
+
 # Local prepatch backups for ad-hoc rollback. Never tracked.
 data/pairs/_prepatch/
 

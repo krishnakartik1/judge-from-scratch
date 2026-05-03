@@ -1,0 +1,66 @@
+{
+  "dryrun_sonnet": {
+    "batch_id": "msgbatch_01WbjpvhMY7u4GNUs57z5fBS",
+    "model": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "n_requests": 50,
+    "submitted_at": "2026-05-03T15:00:27.893189+00:00",
+    "status": "ended"
+  },
+  "dryrun_opus": {
+    "batch_id": "msgbatch_01DqFvuHvPr6eNEe6HrsQY8A",
+    "model": "claude-opus-4-6",
+    "provider": "anthropic",
+    "n_requests": 50,
+    "submitted_at": "2026-05-03T15:00:28.184552+00:00",
+    "status": "ended"
+  },
+  "primary_sonnet": {
+    "batch_id": "msgbatch_01WfTBASnHFUUhvhzST39f7t",
+    "model": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "n_requests": 1938,
+    "submitted_at": "2026-05-03T15:14:35.733728+00:00",
+    "status": "ended"
+  },
+  "retry_primary": {
+    "batch_id": "msgbatch_01Uci4DpNmoZNDJPUdfuiU5c",
+    "model": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "n_requests": 1,
+    "submitted_at": "2026-05-03T15:40:46.811530+00:00",
+    "status": "ended"
+  },
+  "crosscheck_gpt": {
+    "batch_id": "batch_69f77ddcae808190bd38635cbd50ecfa",
+    "input_file_id": "file-QBkTPshEH483BxwtAfRfWV",
+    "model": "gpt-5.4",
+    "provider": "openai",
+    "submitted_at": "2026-05-03T16:54:53.218955+00:00",
+    "status": "failed"
+  },
+  "crosscheck_gpt_chunk_000": {
+    "batch_id": "batch_69f785316a848190a6ad77827f1e05fd",
+    "input_file_id": "file-BxChZgS4G1cRd7goNSzm2Q",
+    "model": "gpt-5.4",
+    "provider": "openai",
+    "submitted_at": "2026-05-03T17:26:09.538747+00:00",
+    "status": "completed"
+  },
+  "crosscheck_gpt_chunk_001": {
+    "batch_id": "batch_69f785ac7c18819096a85dee0df75406",
+    "input_file_id": "file-VrupBfbZciYKJiLdyYGr9q",
+    "model": "gpt-5.4",
+    "provider": "openai",
+    "submitted_at": "2026-05-03T17:28:12.614786+00:00",
+    "status": "completed"
+  },
+  "crosscheck_deepseek": {
+    "batch_id": "e3c6bcd2-32dc-421a-be5c-b3e56f5c0c35",
+    "input_file_id": "file-32a6e96a-85f8-4357-b3e6-7275dde031a6",
+    "model": "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
+    "provider": "together",
+    "submitted_at": "2026-05-03T18:02:47.685749+00:00",
+    "status": "cancelled"
+  }
+}
