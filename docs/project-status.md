@@ -125,6 +125,8 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 20. **DeepSeek V3.1 disabled on Together account**. switched cross-check to Qwen 3 235B Instruct (Qwen/Qwen3-235B-A22B-Instruct-2507-tput). Different lineage (Alibaba), preserves three-labeler triangulation framing in model card.
 
 21. **Cross-check complete** Sonnet primary + GPT-5.4 + Qwen 3 235B (via OpenRouter, not Together — Together's batch hung, OpenRouter completed 500 calls in 3 min for $0.07). 17.4% disagreement rate on hard buckets. Three-lineage triangulation preserved despite DeepSeek V3.1 swap (#20). Total Stage 4 spend: $14.34 of $20 cap.
+
+22. **DPO sourcing** synthesis (60-75%) + verdict-flip (25-40%), no cross-check supplement. Hand-review of 9 'both-cross-checkers-disagreed' pairs revealed a judging-philosophy gap, not Sonnet errors: Sonnet weights letter answers; GPT/Qwen weight reasoning chains. Cross-checker disagreements thus signal rubric difference, not weaker-model mistakes. Trained judge will inherit Sonnet's letter-aware rubric; documented as a deliberate choice in the model card. Stage 3b hand-labeling must apply the same rubric to avoid eval κ deflation.
 ---
 
 ## Open threads / known constraints

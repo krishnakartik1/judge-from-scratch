@@ -443,19 +443,43 @@ Build Stage 5 of the data pipeline: format final training datasets.
 
 Read docs/fine-tuning-primer.md Appendix B sections "The data row
 structure: SFT vs DPO," "Stage 4a: Build the SFT dataset," and
-"Stage 4b: Build the DPO dataset." Also read primer Step 5
+"Stage 4b: Build the DPO dataset." Also read Step 5 sections
 "Chat template" and "A specific design decision: custom tags vs.
 native thinking mode."
+
+Read docs/project-status.md decisions #16 (answer_choices schema),
+#17 (Sonnet 4.6 primary, sonnet_* field names), #18 (cache_control
+in system block), #19 (1 pair dropped, final count 1,937),
+#20-21 (cross-check via Qwen 3 235B; deepseek_verdict field
+contains Qwen output), and #22 (DPO sourcing: synthesis +
+verdict-flip only, no cross-check supplement, due to judging-
+rubric divergence between Sonnet and cross-checkers).
+
+PRE-FLIGHT (do these before writing any code):
+1. Verify the exact Unsloth Gemma 4 E4B model ID by searching
+   their HF gemma-4 collection. The Stage 5 tokenizer must match
+   the Stage 6 training tokenizer exactly.
+2. Read data/labeled/labeled_pairs.jsonl head -3 to confirm field
+   names: should be sonnet_verdict, sonnet_reasoning,
+   sonnet_confidence (not claude_*). Abort if schema differs.
+3. Confirm pair_id 96b558e0bf7cbd01 is NOT present (decision #19).
+   Abort if it is.
+4. Confirm data/judge_system_prompt.md exists. Abort if missing —
+   Stage 5 cannot run without it.
 
 CRITICAL CONSTRAINTS:
 1. Use the Gemma 4 E4B tokenizer to apply the chat template via
    tokenizer.apply_chat_template(). Do NOT hand-roll the template.
-   Load the tokenizer from the Gemma 4 E4B model ID (verify exact
-   ID via `web_search` of Unsloth's gemma-4 collection on HF).
 2. The system prompt does NOT contain `<|think|>`. Native thinking
-   mode is disabled. Custom tags only.
+   mode is disabled. Custom tags only. Verify with a grep at the
+   end.
 3. Target format is `<reasoning>...</reasoning><verdict>X</verdict>`
    where X is A, B, or TIE. Match exactly — Stage 8 eval parses this.
+4. The labeling prompt asked Sonnet for three tags including
+   <confidence>N</confidence>. The trained judge should emit only
+   <reasoning> and <verdict>. Stage 5 MUST strip <confidence> from
+   sonnet_reasoning before writing targets. Verify with a grep at
+   the end.
 
 Write data/05_format_datasets.py:
 
@@ -463,44 +487,90 @@ INPUT: data/labeled/labeled_pairs.jsonl.
 
 SFT FORMATTING:
 - For each labeled pair, produce one row:
-  {prompt: <full chat-template-wrapped prompt>,
-   target: <reasoning>{claude_reasoning}</reasoning><verdict>{claude_verdict}</verdict>}
-- The prompt content uses the system role to set up the judge's role
-  (text TBD; load from data/judge_system_prompt.md if it exists,
-  otherwise use a sensible default and flag it for me to review).
-- The user role contains the question + response A + response B +
-  the verdict question.
-- Apply position-swap doubling: also produce the version with A and
-  B swapped (and verdict flipped accordingly).
-- Filter out pairs where claude_confidence < 3.
+    {prompt: <full chat-template-wrapped prompt>,
+     target: <reasoning>{cleaned_sonnet_reasoning}</reasoning><verdict>{sonnet_verdict}</verdict>}
+- The prompt content uses the system role with text loaded from
+  data/judge_system_prompt.md.
+- The user role contains: question_text + answer_choices block
+  (per decision #16, formatted as "A. ...\nB. ...\nC. ...") +
+  Response A + Response B + the verdict question.
+- Apply position-swap doubling: also produce the version with A
+  and B swapped (and verdict flipped accordingly: A↔B, TIE→TIE).
+- Filter out pairs where sonnet_confidence < 3.
 - Save to data/formatted/sft.jsonl.
 
-DPO FORMATTING:
-- Select highest-quality preference cases (claude_confidence >= 4,
-  no ties, clear chosen/rejected distinction).
-- Construct rejected response from one of three sources, allocated:
-    * 40%: synthesized failure-mode rejected (verbose, hedge-biased,
-      shallow). Call Claude separately to generate a "bad
-      rationalization" of the wrong verdict. Cache the prompt.
-    * 40%: weaker-model mistakes — re-label these pairs through
-      Qwen 2.5 7B Instruct Turbo via Together AI Batch API. Where
-      Qwen disagrees with Claude, use Qwen's verdict and reasoning
-      as the rejected response.
-    * 20%: simple verdict-flip with the original reasoning text.
-- Apply position-swap doubling.
-- Save to data/formatted/dpo.jsonl with fields {prompt, chosen, rejected}.
+DPO FORMATTING (TWO-SOURCE — no cross-check supplement):
+
+Filter to: sonnet_confidence >= 4 AND sonnet_verdict != "TIE".
+Print pool size after filter. Should be ~1,058 unique pairs.
+If < 800, stop and show me — pool is unexpectedly small.
+
+Construct rejected response from one of two sources:
+  * 70%: SYNTHESIZED FAILURE-MODE REJECTED.
+    Call Claude (claude-sonnet-4-6, same as labeler for cost)
+    separately to generate a "bad rationalization" of the WRONG
+    verdict. Cache the synthesis prompt. The synthesis prompt
+    should ask Claude to write reasoning that:
+      - Lands on the wrong verdict (the opposite of sonnet_verdict)
+      - Uses one of these failure modes (vary across rows):
+        * Verbose hedging that obscures the actual answer
+        * Surface-level engagement with the question without
+          analyzing the reasoning chain
+        * Stereotype-aligned reasoning presented confidently
+        * Length asymmetry — overlong response that buries the
+          flawed verdict
+      - Stays in the <reasoning>...</reasoning><verdict>X</verdict>
+        format
+    Cost estimate: ~700 calls × ~300 output tokens ≈ $3-4 with
+    caching on the synthesis prompt.
+
+  * 30%: SIMPLE VERDICT-FLIP.
+    Take sonnet_reasoning verbatim, flip the verdict letter
+    (A↔B), keep the reasoning text unchanged. The result is a
+    rejected response whose reasoning argues for one verdict
+    but selects the other — a real failure mode worth
+    discriminating against.
+
+Apply position-swap doubling to all rows.
+
+Save to data/formatted/dpo.jsonl with fields {prompt, chosen,
+rejected}.
 
 Both datasets follow TRL's expected format.
 
-After running, show me:
-- Row counts for both files.
-- 3 example rows from each (including the raw prompt string so I
-  can verify the chat template wrapper looks right).
-- Confirmation that no `<|think|>` token appears in any system
-  prompt or any other part of any record.
-- Length distribution check: chosen vs rejected, are they balanced?
-  (if chosen is systematically longer, that's verbosity bias risk —
-  flag and stop.)
+DRY-RUN PROTOCOL:
+Before running synthesis on the full ~700-pair pool, do a
+20-pair synthesis dry run. Show me:
+- The first 5 synthesized rejecteds, full text.
+- Cost actually charged for the 20 calls.
+- Token-length distribution of synthesized rejecteds vs the
+  corresponding chosens.
+
+If synthesized rejecteds are systematically longer than chosens
+by >20%, abort — verbosity bias risk in DPO. Adjust the synthesis
+prompt to constrain length and re-test.
+
+Wait for confirmation before running full synthesis.
+
+AFTER FULL RUN, show me:
+- Row counts: SFT (raw, post-confidence-filter, post-position-swap),
+  DPO (raw, post-filter, post-position-swap).
+- DPO source breakdown: how many rejecteds came from synthesis,
+  how many from verdict-flip.
+- 3 example rows from each (SFT, DPO), including the raw prompt
+  string so I can verify chat-template wrapping.
+- Confirmation: grep for `<|think|>` in every record (system,
+  user, target, chosen, rejected). Must return zero hits.
+- Confirmation: grep for `<confidence>` in any target/chosen/
+  rejected. Must return zero hits.
+- Length distribution: chosen vs rejected token counts (mean,
+  median, p90). If chosen is >15% longer on average, flag and
+  stop — verbosity bias risk.
+- Length distribution: synthesis-rejecteds vs flip-rejecteds.
+  These should be roughly comparable; large divergence means
+  the synthesis prompt is producing oddly-shaped rejecteds.
+
+Don't proceed to Stage 6 until I review.
 ```
 
 ---
