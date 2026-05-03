@@ -1,21 +1,29 @@
-# REVAL Judge — Project Context for Claude Code
+# judge-from-scratch — Project Context for Claude Code
 
 ## What this project is
-Fine-tuning Gemma 3 4B into a specialized bias evaluation judge for the
-REVAL framework. Distillation through synthetic data: Claude Opus 4.7 as
-teacher, Gemma 3 4B as student.
+End-to-end educational tutorial that builds a specialized social-bias
+evaluation judge by fine-tuning **Gemma 4 E4B** (decision #12 — switched
+from Gemma 3 4B at project pivot). The artifact published to Hugging
+Face is `gemma4-social-bias-judge`. Distillation through synthetic data:
+Claude Sonnet 4.6 as primary labeler (decision #17), GPT-5.4 + Qwen 3
+235B for cross-check triangulation, BBQ-derived pairs as the training
+corpus, QLoRA + SFT + DPO as the training recipe.
 
 ## The plan
 The full project plan, including dataset design, evaluation methodology,
 and v2 autoresearch enhancement, is in `docs/fine-tuning-primer.md`.
-Read that before doing substantive work.
+Living state-of-the-build is in `docs/project-status.md`. Staged build
+prompts are in `docs/claude-code-prompts.md`. Read those before doing
+substantive work.
 
 ## Stack
-- Unsloth (fast LoRA/QLoRA on Gemma 3 4B)
+- Unsloth (fast LoRA/QLoRA on Gemma 4 E4B)
 - TRL (SFTTrainer, DPOTrainer)
 - PEFT (LoRA via Unsloth)
-- Together AI (candidate generation)
-- Anthropic API (labeling)
+- OpenRouter (candidate generation — decision #1; Together's catalog
+  was deprecating models we needed)
+- Anthropic API (labeling, via Batch API for cost)
+- OpenAI + OpenRouter (cross-check labelers)
 - A single Lambda Labs A100 80GB for training
 
 ## Conventions
@@ -31,17 +39,18 @@ Read that before doing substantive work.
 
 ## Status
 [Update this as you go]
-- [ ] Stage 1: candidate generation
-- [ ] Stage 2: pair construction
-- [ ] Stage 3a: holdout eval set (data/03a_holdout_eval.py)
+- [x] Stage 1: candidate generation (data/01_generate_candidates.py)
+- [x] Stage 1.5: enrichment (data/01b_enrich_candidates.py)
+- [x] Stage 2: pair construction (data/02_construct_pairs.py)
+- [x] Stage 3a: holdout eval set (data/03a_holdout_eval.py)
+- [ ] Stage 3b: hand-label 300 eval pairs (data/03b_label_tool.py)
 - [x] Stage 4: Claude labeling (data/04_label_pairs.py)
-- [ ] Stage 5: dataset formatting
-- [ ] Stage 6: hand-labeling 300 eval pairs
-- [ ] SFT training
-- [ ] DPO training
-- [ ] Eval harness + model card
-- [ ] HuggingFace publish
-- [ ] GGUF export + Ollama Modelfile
+- [x] Stage 5: dataset formatting (data/05_format_datasets.py)
+- [ ] Stage 6: SFT training (Gemma 4 E4B QLoRA)
+- [ ] Stage 7: DPO training
+- [ ] Stage 8: Eval harness + model card
+- [ ] Stage 9: HuggingFace publish + GGUF export
+- [ ] Stage 10: deployment recipes (Ollama + vLLM)
 
 ## Pipeline wiring
 Stage 4 (Claude labeling) reads `data/pairs/pairs_to_label.jsonl`,
