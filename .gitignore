@@ -46,6 +46,10 @@ data/formatted/*.jsonl
 # Local prepatch backups for ad-hoc rollback. Never tracked.
 data/pairs/_prepatch/
 
+# Label-tool transient sidecars (timestamped backup + exclusive lock).
+data/pairs/*.bak-*
+data/pairs/*.lock
+
 # Model checkpoints and adapters
 *.safetensors
 *.bin
