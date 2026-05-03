@@ -6,13 +6,17 @@ Provides:
     - jsonl_append: append a single record to a JSONL file.
     - already_processed: collect keys already written to a JSONL artifact,
       enabling resumable pipeline stages.
+    - atomic_write_json: tmp+rename write of a single JSON payload.
+    - atomic_write_jsonl: tmp+rename write of a list of JSONL records.
+    - file_sha256: hex SHA-256 of a file's contents.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +83,68 @@ def jsonl_append(path: Path | str, record: dict[str, Any]) -> None:
     with p.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False))
         fh.write("\n")
+
+
+def atomic_write_json(path: Path | str, payload: dict[str, Any]) -> None:
+    """Write a JSON payload via tmp+rename (all-or-nothing).
+
+    The tmp file lives at ``path.with_name(path.name + ".tmp")`` so a
+    concurrent reader of ``path`` never sees a half-written file.
+
+    Args:
+        path: Destination JSON file.
+        payload: A JSON-serializable dict; written with ``indent=2``.
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    tmp.replace(p)
+
+
+def atomic_write_jsonl(path: Path | str, records: Iterable[dict[str, Any]]) -> None:
+    """Write a list of dicts as JSONL via tmp+rename (all-or-nothing).
+
+    Same tmp-path convention as :func:`atomic_write_json`. Use this when
+    the entire output is known up-front and a partial file would be
+    worse than no file (e.g. deterministic one-shot pipeline stages).
+
+    Args:
+        path: Destination JSONL file.
+        records: Iterable of JSON-serializable dicts; each is written
+            as one line.
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    with tmp.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record, ensure_ascii=False))
+            fh.write("\n")
+    tmp.replace(p)
+
+
+def file_sha256(path: Path | str) -> str:
+    """Return the hex-encoded SHA-256 of a file's contents.
+
+    Args:
+        path: File to hash.
+
+    Returns:
+        Lowercase hex digest string (64 chars).
+    """
+    p = Path(path)
+    h = hashlib.sha256()
+    with p.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def already_processed(path: Path | str, key_field: str) -> set[str]:

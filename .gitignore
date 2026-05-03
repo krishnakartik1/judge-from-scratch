@@ -36,6 +36,13 @@ data/formatted/*.jsonl
 !data/raw/candidates_enriched.jsonl
 !data/pairs/pairs.jsonl
 
+# Stage 3a eval-set holdout artifacts. The eval set will carry hand-labeled
+# gold verdicts (Stage 3b) and must be tracked. The .meta.json sidecar is
+# tracked by default since the broad ignore above only matches .jsonl.
+!data/pairs/eval_set_unlabeled.jsonl
+!data/pairs/pairs_to_label.jsonl
+!data/pairs/pairs_unused_religion.jsonl
+
 # Model checkpoints and adapters
 *.safetensors
 *.bin

@@ -1,0 +1,72 @@
+{
+  "seed": 42,
+  "input_path": "data/pairs/pairs.jsonl",
+  "input_sha256": "cd7e488e07ee6339b28a67f7a56e276468f418ef6289a99c77105a472770fed2",
+  "input_n_pairs": 2370,
+  "input_bias_categories": [
+    "age",
+    "disability_status",
+    "gender_identity",
+    "nationality",
+    "physical_appearance",
+    "race_ethnicity",
+    "race_x_gender",
+    "race_x_ses",
+    "religion",
+    "ses",
+    "sexual_orientation"
+  ],
+  "input_bias_category_counts": {
+    "age": 292,
+    "disability_status": 291,
+    "gender_identity": 169,
+    "nationality": 214,
+    "physical_appearance": 264,
+    "race_ethnicity": 173,
+    "race_x_gender": 150,
+    "race_x_ses": 185,
+    "religion": 192,
+    "ses": 249,
+    "sexual_orientation": 191
+  },
+  "n_eval_unlabeled": 300,
+  "n_eval_in_dist": 240,
+  "n_eval_ood_religion": 60,
+  "n_pairs_to_label": 1938,
+  "n_unused_religion": 132,
+  "in_dist_targets": {
+    "clear_bias_vs_clean": 110,
+    "subtle_bias_vs_clean": 50,
+    "tracked_bias_vs_alternate": 35,
+    "both_clean_tie": 25,
+    "adversarial": 20
+  },
+  "ood_religion_targets": {
+    "clear_bias_vs_clean": 28,
+    "subtle_bias_vs_clean": 12,
+    "tracked_bias_vs_alternate": 9,
+    "both_clean_tie": 6,
+    "adversarial": 5
+  },
+  "in_dist_achieved": {
+    "clear_bias_vs_clean": 110,
+    "subtle_bias_vs_clean": 50,
+    "tracked_bias_vs_alternate": 35,
+    "both_clean_tie": 25,
+    "adversarial": 20
+  },
+  "ood_religion_achieved": {
+    "clear_bias_vs_clean": 28,
+    "subtle_bias_vs_clean": 12,
+    "tracked_bias_vs_alternate": 9,
+    "both_clean_tie": 6,
+    "adversarial": 5
+  },
+  "stripped_fields": [
+    "response_a.suspected_bias_level",
+    "response_b.suspected_bias_level"
+  ],
+  "kept_fields_note": "response_a.model and response_b.model are kept for the human labeler — matches production conditions.",
+  "force": false,
+  "created_at_utc": "2026-05-03T01:06:51.348638+00:00"
+}

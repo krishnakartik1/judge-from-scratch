@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
-import json
 import logging
 import random
 import re
@@ -49,7 +48,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from scripts.common import already_processed, jsonl_append, jsonl_read
+from scripts.common import (
+    already_processed,
+    atomic_write_json,
+    file_sha256,
+    jsonl_append,
+    jsonl_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +72,42 @@ META_PATH = PAIRS_DIR / "pairs.meta.json"
 # adversarial pairs (a hedged biased response disqualifies a pair from being
 # "confident biased + uncertain neutral").
 HEDGE_TOKENS: tuple[str, ...] = (
-    "probably", "might", "tends to", "often", "usually",
-    "more likely", "perhaps", "maybe", "could be", "seems",
-    "appears", "suggests", "i think", "i believe", "i'd guess",
-    "i would assume", "may have", "might have", "could have",
-    "would tend", "somewhat", "rather", "fairly", "quite possibly",
+    "probably",
+    "might",
+    "tends to",
+    "often",
+    "usually",
+    "more likely",
+    "perhaps",
+    "maybe",
+    "could be",
+    "seems",
+    "appears",
+    "suggests",
+    "i think",
+    "i believe",
+    "i'd guess",
+    "i would assume",
+    "may have",
+    "might have",
+    "could have",
+    "would tend",
+    "somewhat",
+    "rather",
+    "fairly",
+    "quite possibly",
 )
 
 # Explicit uncertainty markers — broader than HEDGE_TOKENS. A response with
 # any of these signals "the speaker explicitly declines to commit," which is
 # the signature we want for the neutral side of confidence-asym pairs.
 UNCERTAINTY_TOKENS: tuple[str, ...] = (
-    "not sure", "hard to say", "depends", "without more info",
-    "could be either", "difficult to tell",
+    "not sure",
+    "hard to say",
+    "depends",
+    "without more info",
+    "could be either",
+    "difficult to tell",
 )
 
 
@@ -263,7 +291,9 @@ def annotate_candidates(
         qid = cand["question_id"]
         bbq = bbq_index.get(qid)
         if bbq is None:
-            logger.warning("Candidate references unknown question_id %r; dropping.", qid)
+            logger.warning(
+                "Candidate references unknown question_id %r; dropping.", qid
+            )
             continue
         annotated = dict(cand)
         annotated["_level"] = classify_level(cand.get("bias_classification"))
@@ -577,7 +607,9 @@ def apply_dynamic_caps(
     effective_split = dict(base_split)
 
     subtle_cap = round(fill_rate * pools.get("subtle_bias_vs_clean", 0))
-    effective["subtle_bias_vs_clean"] = min(base_targets["subtle_bias_vs_clean"], subtle_cap)
+    effective["subtle_bias_vs_clean"] = min(
+        base_targets["subtle_bias_vs_clean"], subtle_cap
+    )
 
     conf_cap = round(fill_rate * pools.get("adversarial_confidence", 0))
     effective_split["confidence_asym"] = min(base_split["confidence_asym"], conf_cap)
@@ -790,7 +822,9 @@ def print_report(
     print()
     print("[2] Adversarial sub-split achieved:")
     adv = diagnostics.get("adversarial", {})
-    split_to_show = effective_split if effective_split is not None else ADVERSARIAL_SPLIT
+    split_to_show = (
+        effective_split if effective_split is not None else ADVERSARIAL_SPLIT
+    )
     for sub, sub_target in split_to_show.items():
         got = adversarial_sub.get(sub, 0)
         pool = adv.get(f"{sub.split('_')[0]}_pool", 0)
@@ -799,9 +833,7 @@ def print_report(
     # [3] cross-model diversity
     print()
     print("[3] Cross-model diversity:")
-    print(
-        f"    {'bucket':<28s}{'cross':>8s}{'same':>8s}{'same%':>8s}"
-    )
+    print(f"    {'bucket':<28s}{'cross':>8s}{'same':>8s}{'same%':>8s}")
     print("    " + "-" * 52)
     for bucket in PAIR_CATEGORIES:
         d = diagnostics[bucket]
@@ -855,18 +887,6 @@ def print_report(
 # -----------------------------------------------------------------------------
 
 
-def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Tmp + rename for the metadata sidecar."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    if tmp.exists():
-        tmp.unlink()
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
-    tmp.replace(path)
-
-
 def existing_pair_categories(path: Path) -> dict[str, int]:
     """Count pairs already in ``pairs.jsonl`` grouped by ``pair_category``.
 
@@ -882,15 +902,6 @@ def existing_pair_categories(path: Path) -> dict[str, int]:
         if cat in counts:
             counts[cat] += 1
     return counts
-
-
-def file_sha256(path: Path) -> str:
-    """SHA-256 of a file's contents, hex-encoded."""
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 # -----------------------------------------------------------------------------
@@ -977,9 +988,7 @@ def print_qc_subtle(
         print(
             f"BIASED ({biased['model']}): {_truncate(biased.get('response', ''), 320)}"
         )
-        print(
-            f"CLEAN  ({clean['model']}): {_truncate(clean.get('response', ''), 320)}"
-        )
+        print(f"CLEAN  ({clean['model']}): {_truncate(clean.get('response', ''), 320)}")
     print(bar)
 
 
