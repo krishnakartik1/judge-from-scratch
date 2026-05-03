@@ -30,3 +30,9 @@ stage1_enrich = _load("stage1_enrich", REPO_ROOT / "data" / "01b_enrich_candidat
 stage2_pairs = _load("stage2_pairs", REPO_ROOT / "data" / "02_construct_pairs.py")
 stage3a_holdout = _load("stage3a_holdout", REPO_ROOT / "data" / "03a_holdout_eval.py")
 stage4_label = _load("stage4_label", REPO_ROOT / "data" / "04_label_pairs.py")
+# Stage 5 helpers and modules. Loaded under their on-disk basename so
+# sibling imports inside the data/ scripts (e.g. ``from _format_helpers
+# import ...``) resolve via sys.modules.
+format_helpers = _load("_format_helpers", REPO_ROOT / "data" / "_format_helpers.py")
+synth_rejected = _load("synth_rejected", REPO_ROOT / "data" / "synth_rejected.py")
+stage5_format = _load("stage5_format", REPO_ROOT / "data" / "05_format_datasets.py")

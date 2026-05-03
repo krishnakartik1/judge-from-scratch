@@ -1,0 +1,11 @@
+{
+  "stage": "5/format-sft",
+  "raw_count": 1937,
+  "post_confidence_filter_count": 1922,
+  "dropped_low_confidence": 15,
+  "post_position_swap_count": 3844,
+  "judge_prompt_sha": "3136c71b9f4b1aa2a5451752d4cd9c64b31473444c63a7723f0f852d513bcc7c",
+  "labeled_pairs_sha": "ceaab2a79c5d6e933159dd2bdb516c434947ef7e915fdb75fab9cc87a36266f6",
+  "tokenizer_model_id": "unsloth/gemma-4-E4B-it",
+  "git_sha": "a08ab77"
+}

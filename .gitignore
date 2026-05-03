@@ -56,6 +56,22 @@ data/formatted/*.jsonl
 !data/labeled/dryrun_opus_v1.jsonl
 !data/labeled/.cost_ledger.jsonl
 
+# Stage 5 (formatting) artifacts. Final SFT/DPO datasets, the synthesis
+# audit trail, and cost ledger are tracked. Batch-API in-flight state
+# (.batches.json), parse-error / batch-error sidecars, and terminal-
+# error list stay ignored — transient sidecars only useful mid-run.
+!data/formatted/sft.jsonl
+!data/formatted/dpo.jsonl
+!data/formatted/synthesis_results.jsonl
+!data/formatted/.synth_cost_ledger.jsonl
+data/formatted/.batches.json
+data/formatted/.synth_parse_errors.jsonl
+data/formatted/.synth_batch_errors.jsonl
+data/formatted/.synth_errors.jsonl
+# Local backup of the v1 dryrun (120-token target) before we re-tuned the
+# synth prompt. Kept on disk for reference; not durable enough to track.
+data/formatted/_dryrun_v1_*/
+
 # Local prepatch backups for ad-hoc rollback. Never tracked.
 data/pairs/_prepatch/
 
