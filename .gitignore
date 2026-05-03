@@ -68,6 +68,9 @@ data/formatted/.batches.json
 data/formatted/.synth_parse_errors.jsonl
 data/formatted/.synth_batch_errors.jsonl
 data/formatted/.synth_errors.jsonl
+# Local backup of the v1 dryrun (120-token target) before we re-tuned the
+# synth prompt. Kept on disk for reference; not durable enough to track.
+data/formatted/_dryrun_v1_*/
 
 # Local prepatch backups for ad-hoc rollback. Never tracked.
 data/pairs/_prepatch/

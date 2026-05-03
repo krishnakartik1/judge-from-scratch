@@ -63,7 +63,7 @@ PRICING: dict[str, dict[str, float]] = {
     },
 }
 
-ANTHROPIC_MAX_TOKENS = 350  # ~120 reasoning + verdict tag + slack
+ANTHROPIC_MAX_TOKENS = 600  # ~300 reasoning + verdict tag + headroom
 
 POLL_SLEEP_SEC = 30
 POLL_MAX_CONSECUTIVE_5XX = 5
@@ -101,7 +101,7 @@ _FAILURE_MODE_DIRECTIVES: dict[str, str] = {
     ),
     "length_burying": (
         "Write a longer-than-needed response that buries the verdict "
-        "inside meandering analysis. Stay under 120 reasoning tokens."
+        "inside meandering analysis."
     ),
 }
 
@@ -115,7 +115,7 @@ is to teach the trained judge to discriminate against this exact
 failure mode.
 
 Output format (exact, no extra text):
-<reasoning>...2-5 sentences exhibiting the specified failure mode...</reasoning>
+<reasoning>...4-5 sentences exhibiting the specified failure mode...</reasoning>
 <verdict>WRONG_VERDICT</verdict>
 
 Failure modes:
@@ -128,8 +128,9 @@ Failure modes:
 - length_burying: write a longer-than-needed response that buries
   the verdict inside meandering analysis.
 
-Stay under ~120 reasoning tokens regardless of failure mode (length
-parity matters — verbose != overlong).
+Target reasoning length: similar to a careful 4-5 sentence analysis,
+roughly 200-300 tokens. Soft target — let the failure mode shape the
+length naturally; do not pad or truncate to hit a number.
 
 The "WRONG_VERDICT" you must pick is provided per request. NEVER
 emit the correct verdict. NEVER add preambles, disclaimers, or text

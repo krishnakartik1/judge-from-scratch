@@ -1,0 +1,13 @@
+{
+  "stage": "5/format-dpo",
+  "raw_pool": 1100,
+  "synth_used_pairs": 779,
+  "flip_used_pairs": 321,
+  "synth_skipped_pairs": 0,
+  "post_position_swap_count": 2200,
+  "judge_prompt_sha": "3136c71b9f4b1aa2a5451752d4cd9c64b31473444c63a7723f0f852d513bcc7c",
+  "labeled_pairs_sha": "ceaab2a79c5d6e933159dd2bdb516c434947ef7e915fdb75fab9cc87a36266f6",
+  "synth_results_sha": "5da6d1699cbec35122c018e2c3ef150bfecd527f8f291eeedfdc8c62178d7030",
+  "tokenizer_model_id": "unsloth/gemma-4-E4B-it",
+  "git_sha": "a08ab77"
+}

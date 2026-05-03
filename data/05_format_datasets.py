@@ -1016,7 +1016,8 @@ def run_format_dpo(args: argparse.Namespace) -> int:
     synth_results = {
         r["pair_id"]: r
         for r in jsonl_read(SYNTH_RESULTS_PATH)
-        if r.get("phase") in ("dryrun-synth", "full-synth", "full-synth-retry")
+        if r.get("phase")
+        in ("dryrun-synth", "full-synth", "full-synth-retry", "leak-retry")
     }
 
     synth_target_pairs = _synth_subset(dpo_pool)

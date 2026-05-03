@@ -1,0 +1,9 @@
+{
+  "n_records": 20,
+  "n_target": 20,
+  "chosen_median_chars": 896.0,
+  "synth_median_chars": 1038.5,
+  "synth_to_chosen_ratio": 1.1590401785714286,
+  "gate_threshold": 1.25,
+  "synth_results_sha": "21c6178ec124a9f31ec26447bc3d39bc9d49698b42cc18aff16e52f56d430091"
+}
