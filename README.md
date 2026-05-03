@@ -1,9 +1,50 @@
-# REVAL Judge
+# judge-from-scratch
 
-Fine-tuning Gemma 3 4B into a specialized bias evaluation judge for the
-REVAL framework. See `docs/fine-tuning-primer.md` for the full plan.
+> Generate data, train, evaluate, and deploy a specialized LLM judge — explained step by step.
 
+This repo walks through fine-tuning a small open-weights model into a specialized social-bias evaluation judge, end to end. You'll see how to construct training pairs from a benchmark dataset, label them with a frontier model, run SFT + DPO with QLoRA, evaluate with rigor, and deploy.
 
-Initial candidate generation produced 526 biased candidates (8.8% of 6,000), aligning with documented BBQ bias rates for similar-scale open models. Pair distribution was rebalanced from the planned 45% clear-bias share to 30%, with the freed allocation moved to bias-vs-bias pairs that teach relative-severity judgment.
+The model produced is `gemma4-social-bias-judge`: a fine-tuned Gemma 4 E4B that takes a question and two model responses and outputs a verdict on which response shows more social bias. The methodology generalizes to other judge-style fine-tuning tasks.
 
-Pair construction was constrained by BBQ's structure: each question has a single tracked stereotype target, making 'two biased responses on the same question' structurally identical. The pair distribution was redesigned to substitute 'tracked-bias vs alternate-bias' (biased vs. partially-biased-along-different-axis) for the impossible 'bias-vs-bias same-target' category. Final dataset: 2,400 pairs, with bias categories validated against cross-model supply.
+## Where to start
+
+**New to fine-tuning?** Start with [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md). The primer walks through gradient descent → LoRA → QLoRA → SFT → DPO, building intuition before any code.
+
+**Comfortable with LoRA, want to see a real pipeline?** Jump to [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md) Appendix B. It covers how to construct training pairs from BBQ, label them with Claude, and format for SFT/DPO. From there, the build itself lives in [`docs/claude-code-prompts.md`](docs/claude-code-prompts.md) — staged prompts you can run through Claude Code one stage at a time.
+
+**Just want the deployment recipe and the model?** See [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md) Step 9 for the deployment overview, and [the model card on HF](https://huggingface.co/krishnak/gemma4-social-bias-judge) for results and a working Ollama one-liner.
+
+**Reading a file directly without this README?** Each doc file has a breadcrumb at the top showing where it fits in the sequence. Follow those if you want the full path.
+
+## What you'll need
+
+- Python 3.11
+- A GPU with ≥12 GB VRAM (free Colab T4 works for the training runs)
+- API keys: Anthropic (labeling), OpenRouter (candidate generation), Together (cross-checking), Hugging Face (publishing)
+- ~$30-50 in API + compute costs for the full pipeline
+- ~6-10 hours of hand-labeling time for the eval set
+
+## Repo structure
+
+```
+docs/                  conceptual primer, design decisions, project status
+  fine-tuning-primer.md
+  claude-code-prompts.md
+  project-status.md
+src/                   pipeline code (Stages 0-9)
+deployment/            vLLM Dockerfile, Ollama Modelfile (added in Stage 10)
+eval/                  eval harness, results
+notebooks/             step-by-step walkthroughs (added in Stage 11, post-v1)
+```
+
+## Status
+
+This repo is being built incrementally. Current state, completed stages, and pending work are tracked in [`docs/project-status.md`](docs/project-status.md).
+
+## What this is, and what it isn't
+
+**This is:** an end-to-end tutorial for fine-tuning a small open-weights LLM into a specialized social-bias evaluation judge. The training signal comes from BBQ (Bias Benchmark for QA). The fine-tuning recipe is QLoRA + SFT + DPO. The deployment options shown are Ollama, vLLM, and Hugging Face.
+
+**This is not:** a political-bias evaluator, a fact-checking model, a moderation tool, or a general-purpose evaluator. The judge is trained for one specific task (relative bias comparison between two model responses) on one specific kind of bias (social/demographic stereotyping as defined by BBQ).
+
+A separate future project, REVAL, is planned to address factual-deference and rhetorical-parity evaluation. That's a different problem with different training data; this repo doesn't attempt it.
