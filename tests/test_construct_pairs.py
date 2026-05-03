@@ -209,6 +209,11 @@ def _cand(
         "_wc": wc,
         "_question_text": "context. question?",
         "_bbq_category": "age",
+        "_answer_choices": [
+            {"letter": "A", "text": "ans0"},
+            {"letter": "B", "text": "ans1"},
+            {"letter": "C", "text": "ans2"},
+        ],
     }
 
 
@@ -305,7 +310,9 @@ def test_adversarial_length_excludes_same_model() -> None:
     assert candidate_pairs_adversarial_length(cands) == []
 
 
-def test_adversarial_confidence_requires_biased_unhedged_and_neutral_uncertain() -> None:
+def test_adversarial_confidence_requires_biased_unhedged_and_neutral_uncertain() -> (
+    None
+):
     cands = [
         _cand(model="A", level="biased", hedged=False, uncertain=False),
         _cand(model="B", level="neutral", uncertain=True),  # ✓ uncertain neutral
@@ -421,6 +428,9 @@ def test_annotate_candidates_adds_derived_fields() -> None:
             "context": "Two people walked in.",
             "question": "Who was rude?",
             "category": "age",
+            "ans0": "The older one",
+            "ans1": "Cannot be determined",
+            "ans2": "The younger one",
         }
     }
     enriched = [
@@ -443,12 +453,32 @@ def test_annotate_candidates_adds_derived_fields() -> None:
     assert annotated[1]["_level"] == "neutral"
     assert annotated[0]["_question_text"] == "Two people walked in. Who was rude?"
     assert annotated[0]["_bbq_category"] == "age"
+    assert annotated[0]["_answer_choices"] == [
+        {"letter": "A", "text": "The older one"},
+        {"letter": "B", "text": "Cannot be determined"},
+        {"letter": "C", "text": "The younger one"},
+    ]
 
 
 def test_annotate_candidates_drops_parse_failed() -> None:
-    bbq_index = {"q1": {"question_id": "q1", "context": "c", "question": "q?", "category": "age"}}
+    bbq_index = {
+        "q1": {
+            "question_id": "q1",
+            "context": "c",
+            "question": "q?",
+            "category": "age",
+            "ans0": "a",
+            "ans1": "b",
+            "ans2": "c",
+        }
+    }
     enriched = [
-        {"question_id": "q1", "model": "A", "response": "x", "bias_classification": "parse_failed"}
+        {
+            "question_id": "q1",
+            "model": "A",
+            "response": "x",
+            "bias_classification": "parse_failed",
+        }
     ]
     assert annotate_candidates(enriched, bbq_index) == []
 
@@ -486,9 +516,7 @@ def _make_question_block(
         cands.append(_cand(qid=qid, model=pool[idx], level="neutral"))
         idx += 1
     for _ in range(unclear):
-        cands.append(
-            _cand(qid=qid, model=pool[idx], level="unclear", chosen_idx=2)
-        )
+        cands.append(_cand(qid=qid, model=pool[idx], level="unclear", chosen_idx=2))
         idx += 1
     return cands
 
@@ -497,9 +525,7 @@ def test_sample_pairs_respects_targets_when_supply_sufficient() -> None:
     # Build 100 questions each with 1 unhedged-biased + 1 neutral + 1 unclear.
     # Supply per question: clear=1, tracked_vs_alt=1, others=0.
     cands_by_q = {
-        f"q{i}": _make_question_block(
-            f"q{i}", biased_unhedged=1, neutral=1, unclear=1
-        )
+        f"q{i}": _make_question_block(f"q{i}", biased_unhedged=1, neutral=1, unclear=1)
         for i in range(100)
     }
     targets = {
@@ -519,9 +545,7 @@ def test_sample_pairs_no_cross_bucket_duplicates() -> None:
     # Construct a setup where the same (q, m1, m2) pair could in theory be
     # picked by two buckets (clear and tracked-vs-alternate). Confirm dedup.
     cands_by_q = {
-        f"q{i}": _make_question_block(
-            f"q{i}", biased_unhedged=1, neutral=1, unclear=1
-        )
+        f"q{i}": _make_question_block(f"q{i}", biased_unhedged=1, neutral=1, unclear=1)
         for i in range(20)
     }
     targets = {
@@ -543,9 +567,7 @@ def test_sample_pairs_no_cross_bucket_duplicates() -> None:
 
 def test_sample_pairs_deterministic_under_seed() -> None:
     cands_by_q = {
-        f"q{i}": _make_question_block(
-            f"q{i}", biased_unhedged=1, neutral=2, unclear=1
-        )
+        f"q{i}": _make_question_block(f"q{i}", biased_unhedged=1, neutral=2, unclear=1)
         for i in range(30)
     }
     targets = {
@@ -631,6 +653,7 @@ def test_build_output_record_schema_matches_spec() -> None:
         "pair_id",
         "question_id",
         "question_text",
+        "answer_choices",
         "bias_category",
         "response_a",
         "response_b",
@@ -699,6 +722,9 @@ def _write_minimal_fixtures(tmp_path: Path) -> tuple[Path, Path, Path]:
                 "context": "Ctx.",
                 "question": "Who?",
                 "category": "age",
+                "ans0": "Older",
+                "ans1": "Cannot say",
+                "ans2": "Younger",
             }
         )
         # Biased unhedged.

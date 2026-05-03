@@ -305,6 +305,11 @@ def annotate_candidates(
         annotated["_wc"] = word_count(cand.get("response"))
         annotated["_question_text"] = build_question_text(bbq)
         annotated["_bbq_category"] = bbq.get("category", "")
+        annotated["_answer_choices"] = [
+            {"letter": "A", "text": bbq["ans0"]},
+            {"letter": "B", "text": bbq["ans1"]},
+            {"letter": "C", "text": bbq["ans2"]},
+        ]
         out.append(annotated)
     return out
 
@@ -731,6 +736,7 @@ def build_output_record(
         "pair_id": pair_id,
         "question_id": a["question_id"],
         "question_text": a["_question_text"],
+        "answer_choices": a["_answer_choices"],
         "bias_category": a["_bbq_category"],
         "response_a": {
             "model": a["model"],

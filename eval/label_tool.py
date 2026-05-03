@@ -242,6 +242,14 @@ def format_pair(
     bar_eq = "=" * 80
     bar_dash = "-" * 80
 
+    choices = record.get("answer_choices") or []
+    choice_lines: list[str] = []
+    if choices:
+        choice_lines.append("ANSWER CHOICES:")
+        for choice in choices:
+            choice_lines.append(_indent(f"{choice['letter']}. {choice['text']}"))
+        choice_lines.append("")
+
     parts = [
         bar_eq,
         f"{bold_open}{slice_tag}{bold_close}   {header_line}",
@@ -254,6 +262,7 @@ def format_pair(
         "QUESTION:",
         _indent(record["question_text"]),
         "",
+        *choice_lines,
         f"RESPONSE A  ({record['response_a']['model']}):",
         _indent(record["response_a"]["text"]),
         "",

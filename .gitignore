@@ -43,6 +43,9 @@ data/formatted/*.jsonl
 !data/pairs/pairs_to_label.jsonl
 !data/pairs/pairs_unused_religion.jsonl
 
+# Local prepatch backups for ad-hoc rollback. Never tracked.
+data/pairs/_prepatch/
+
 # Model checkpoints and adapters
 *.safetensors
 *.bin
