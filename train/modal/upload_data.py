@@ -1,16 +1,19 @@
-"""Idempotent uploader for SFT training data and probe holdout.
+"""Idempotent uploader for training data and the probe holdout.
 
-Pushes ``data/formatted/sft.jsonl`` (the Stage 5 SFT artifact) and
-``data/pairs/eval_set_unlabeled.jsonl`` (the religion-only OOD
-holdout, used as the dry-run/full-run probe source) to the Modal
-volume ``judge-from-scratch`` at ``/vol/data/``.
+Pushes the Stage 5 SFT artifact, the Stage 5 DPO artifact, and the
+holdout probe source to the Modal volume ``judge-from-scratch`` at
+``/vol/data/``:
+
+- ``data/formatted/sft.jsonl`` -> ``/vol/data/sft.jsonl``
+- ``data/formatted/dpo.jsonl`` -> ``/vol/data/dpo.jsonl``
+- ``data/pairs/eval_set_unlabeled.jsonl``
+   -> ``/vol/data/eval_set_unlabeled.jsonl``
 
 Run from project root:
     modal run train/modal/upload_data.py
 
 Idempotent: re-running overwrites the same paths on the volume,
 so you can re-upload after a Stage 5 re-run without volume cleanup.
-The DPO upload in Stage 7 reuses this same pattern.
 """
 
 from __future__ import annotations
@@ -27,12 +30,15 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
 SFT_LOCAL = "data/formatted/sft.jsonl"
 SFT_REMOTE = "/vol/data/sft.jsonl"
+DPO_LOCAL = "data/formatted/dpo.jsonl"
+DPO_REMOTE = "/vol/data/dpo.jsonl"
 EVAL_LOCAL = "data/pairs/eval_set_unlabeled.jsonl"
 EVAL_REMOTE = "/vol/data/eval_set_unlabeled.jsonl"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .add_local_file(SFT_LOCAL, "/root/sft.jsonl", copy=True)
+    .add_local_file(DPO_LOCAL, "/root/dpo.jsonl", copy=True)
     .add_local_file(EVAL_LOCAL, "/root/eval_set_unlabeled.jsonl", copy=True)
 )
 
@@ -42,21 +48,30 @@ def upload() -> dict[str, int]:
     Path("/vol/data").mkdir(parents=True, exist_ok=True)
     Path("/vol/checkpoints/sft").mkdir(parents=True, exist_ok=True)
     Path("/vol/checkpoints/sft-final").mkdir(parents=True, exist_ok=True)
+    Path("/vol/checkpoints/dpo").mkdir(parents=True, exist_ok=True)
+    Path("/vol/checkpoints/dpo-final").mkdir(parents=True, exist_ok=True)
 
     shutil.copyfile("/root/sft.jsonl", SFT_REMOTE)
+    shutil.copyfile("/root/dpo.jsonl", DPO_REMOTE)
     shutil.copyfile("/root/eval_set_unlabeled.jsonl", EVAL_REMOTE)
 
     volume.commit()
 
     sft_size = Path(SFT_REMOTE).stat().st_size
+    dpo_size = Path(DPO_REMOTE).stat().st_size
     eval_size = Path(EVAL_REMOTE).stat().st_size
     print(f"Uploaded {SFT_REMOTE} ({sft_size:,} bytes)")
+    print(f"Uploaded {DPO_REMOTE} ({dpo_size:,} bytes)")
     print(f"Uploaded {EVAL_REMOTE} ({eval_size:,} bytes)")
     print("\n/vol/data/ contents:")
     for p in sorted(Path("/vol/data").iterdir()):
         print(f"  {p.name}  {p.stat().st_size:>12,} bytes")
 
-    return {"sft_bytes": sft_size, "eval_bytes": eval_size}
+    return {
+        "sft_bytes": sft_size,
+        "dpo_bytes": dpo_size,
+        "eval_bytes": eval_size,
+    }
 
 
 @app.local_entrypoint()
@@ -80,8 +95,11 @@ def main() -> None:
         function="upload_data",
         gpu="CPU",
         wallclock_s=actual_wallclock_s,
-        notes=f"sft_bytes={result.get('sft_bytes')} "
-        f"eval_bytes={result.get('eval_bytes')}",
+        notes=(
+            f"sft_bytes={result.get('sft_bytes')} "
+            f"dpo_bytes={result.get('dpo_bytes')} "
+            f"eval_bytes={result.get('eval_bytes')}"
+        ),
     )
     print(
         f"[cost] Upload recorded: ${row['est_cost_usd']:.4f} "

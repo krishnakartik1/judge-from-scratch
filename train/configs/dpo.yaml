@@ -1,0 +1,54 @@
+model_id: "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
+sft_adapter_dir: "/vol/checkpoints/sft-final/"
+max_seq_length: 2048
+load_in_4bit: true
+
+# LoRA shape is fixed by the SFT adapter (r=16, alpha=32). Recorded here
+# for audit only — DPO loads the existing SFT adapter and trains it
+# further; it does NOT call get_peft_model.
+lora_audit:
+  r: 16
+  lora_alpha: 32
+  target_modules: "all-linear"
+
+training:
+  learning_rate: 5.0e-6
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  beta: 0.1
+  loss_type: "sigmoid"
+  max_length: 2048
+  max_prompt_length: 1024
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"
+  weight_decay: 0.0
+  # Full-run cadence; dryrun overrides to 1 in code (only ~3 optim steps).
+  logging_steps: 5
+  save_strategy: "epoch"
+  # Explicit `1` survives Unsloth's source-injected override at
+  # unsloth/models/rl.py:1194-1208 (only triggers when value is None);
+  # `1` keeps HF datasets in the single-process branch (no Pool, no
+  # Unsloth-patched-class pickling crash).
+  dataset_num_proc: 1
+
+output:
+  checkpoints_dir: "/vol/checkpoints/dpo/"
+  final_dir: "/vol/checkpoints/dpo-final/"
+  merged_fp16_dir: "/vol/checkpoints/merged-fp16/"
+
+wandb:
+  project: "judge-from-scratch"
+
+probe:
+  source: "/vol/data/eval_set_unlabeled.jsonl"
+  count: 5
+  max_new_tokens: 384
+  sft_adapter_for_compare: "/vol/checkpoints/sft-final/"
+
+# Smallest acceptable post-position-swap row count. Stage 5 decision #22
+# allows a range of post-swap counts depending on the synthesis/flip mix;
+# anything below 800 means Stage 5 dropped too many rows on verify and
+# DPO won't have enough signal — abort rather than waste a training run.
+min_train_rows: 800

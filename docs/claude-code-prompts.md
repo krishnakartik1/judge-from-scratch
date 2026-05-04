@@ -850,10 +850,13 @@ Read docs/fine-tuning-primer.md Step 7 (DPO) and Appendix C.
 
 Write train/dpo.py:
 
-STARTING POINT: load the SFT-trained adapter from outputs/sft-final/.
-Continue training from there with DPO.
+STARTING POINT: load the SFT-trained adapter from
+/vol/checkpoints/sft-final/ on the Modal volume (same volume
+mount as Stage 6). Continue training from there with DPO.
 
-DATA: data/formatted/dpo.jsonl. Use DPOTrainer from TRL.
+DATA: data/formatted/dpo.jsonl on the Modal volume. Verify the
+file exists before starting — if it doesn't, abort with a clear
+message (Stage 5b must run first). Use DPOTrainer from TRL.
 
 CHAT TEMPLATE: same as Stage 6.
 
@@ -880,14 +883,27 @@ Don't load a separate copy of the model — that doubles VRAM.
 
 TRACKING: same W&B project, run name with "dpo" suffix.
 
-OUTPUT: outputs/dpo-final/ — final merged adapter ready for eval.
+OUTPUT: /vol/checkpoints/dpo-final/ on the Modal volume — final
+adapter ready for eval. Also produce /vol/checkpoints/merged-fp16/
+(merged + unloaded full-precision checkpoint for vLLM and GGUF).
 
 After training, also produce a merged-and-unloaded full-precision
 checkpoint at outputs/merged-fp16/ for use with vLLM and GGUF
 conversion.
 
-DRY RUN: 50-row, 1-epoch DPO dry-run on top of the SFT adapter
-before launching the full run.
+DRY RUN: 50-row, 1-epoch DPO dry-run on top of the SFT adapter.
+Output must include:
+- DPOTrainer per-step metrics: rewards/chosen, rewards/rejected,
+  rewards/margins, rewards/accuracies, logps/chosen, logps/rejected.
+  Margin should be growing; both logps decreasing together is the
+  over-collapse failure mode and means abort.
+- Peak VRAM and steps/sec.
+- Inference probe on the same 5 religion pairs used in Stage 6
+  (IDs: c78b5769d2397d62, ff06d34c694a8518, 8d2242064d47609d,
+  276e453aa5b6dd74, 3e61526e52561d21). Show side-by-side: 
+  SFT verdict | DPO verdict | reasoning quality. max_new_tokens=384.
+- Thinking-mode assertion: read the first DPO row's prompt, confirm
+  no <|think|> token. Abort if found.
 
 Show the script, config, dry-run output, and resource estimate.
 Don't run the full training yet.

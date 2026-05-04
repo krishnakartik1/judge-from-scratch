@@ -57,6 +57,14 @@ MODAL_GPU_RATES_USD_PER_SEC: dict[str, float] = {
 # headroom; tighten for production.
 STAGE6_BUDGET_CAP_USD: float = 30.0
 
+# Stage 7 budget cap. The original $30 minus what Stage 6 actually
+# burned ($3.63 across SFT smoke, dryrun, and full run as of 2026-05-04
+# — see train/.cost_ledger.jsonl). Effectively "the remaining money
+# allocated when the project started, with Stage 6 baked in." Accepts
+# DPO dryrun (~$0.25 expected, $0.93 worst-case) and full run (~$7
+# expected, $7.44 worst-case) with comfortable headroom for retries.
+STAGE7_BUDGET_CAP_USD: float = 26.37
+
 
 class BudgetExceededError(RuntimeError):
     """Raised when projected + cumulative spend would exceed the cap."""
