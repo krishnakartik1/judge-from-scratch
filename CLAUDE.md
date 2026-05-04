@@ -46,7 +46,7 @@ substantive work.
 - [ ] Stage 3b: hand-label 300 eval pairs (data/03b_label_tool.py)
 - [x] Stage 4: Claude labeling (data/04_label_pairs.py)
 - [x] Stage 5: dataset formatting (data/05_format_datasets.py)
-- [ ] Stage 6: SFT training (Gemma 4 E4B QLoRA)
+- [x] Stage 6: SFT training (Gemma 4 E4B QLoRA on Modal)
 - [ ] Stage 7: DPO training
 - [ ] Stage 8: Eval harness + model card
 - [ ] Stage 9: HuggingFace publish + GGUF export

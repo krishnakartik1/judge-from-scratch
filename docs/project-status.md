@@ -40,7 +40,7 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 3b | Hand-labeling tool + 300-pair manual labeling | ⏳ |
 | 4 | Claude labeling (primary + cross-check) | ✅ Done |
 | 5 | SFT/DPO dataset formatting (custom tags, no thinking mode) | ✅ Done |
-| 6 | SFT training (Gemma 4 E4B QLoRA) | ⏳ |
+| 6 | SFT training (Gemma 4 E4B QLoRA on Modal) | ✅ Done |
 | 7 | DPO training | ⏳ |
 | 8 | Eval harness | ⏳ |
 | 9 | Publishing (HF model + GGUF + dataset) | ⏳ |
@@ -129,6 +129,21 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 22. **DPO sourcing** synthesis (60-75%) + verdict-flip (25-40%), no cross-check supplement. Hand-review of 9 'both-cross-checkers-disagreed' pairs revealed a judging-philosophy gap, not Sonnet errors: Sonnet weights letter answers; GPT/Qwen weight reasoning chains. Cross-checker disagreements thus signal rubric difference, not weaker-model mistakes. Trained judge will inherit Sonnet's letter-aware rubric; documented as a deliberate choice in the model card. Stage 3b hand-labeling must apply the same rubric to avoid eval κ deflation.
 
 23. **Stage 5 shipped at 70/30 synth/flip mid-range.** Final SFT 3,844 rows (1,922 pairs × position-swap, 15 dropped at conf<3); DPO 2,200 rows (1,100 pool × swap; 1,558 synth + 642 flip). Total spend $2.05 / $15 cap (Sonnet 4.6 Batch API at 50% discount). Synth prompt was re-tuned mid-run from "~120 reasoning tokens" to "200-300 tokens (soft target)" — v1 produced rejecteds whose bottom decile sat entirely below chosen's bottom decile, opening a "shorter = rejected" verbosity-bias shortcut. v2 closed it: 0/779 synth records below chosen p10. Three synth rejecteds leaked the wrong-verdict instruction ("we need to say the verdict is B"); re-synthesized via the stricter retry suffix and merged under phase=`leak-retry`. Final verify gates: 0 `<|think|>` hits, 0 verdict-flip violations across all 2,200 DPO rows, chosen/rejected median ratio 0.90× (under 1.15× block threshold).
+
+24. **Stage 6 SFT shipped on Modal.** 3,844 rows × 3 epochs (720 optimizer steps at effective batch 16) trained in 88 min wall-clock on a single A100-40GB. Final `train_loss` 0.889, `mean_token_accuracy` 86.1% (vs random ~10%), peak VRAM 23.4 GB, `entropy` collapsed from 3.07 → 0.475. Loss curve monotonic, no spikes. Total Stage 6 spend $3.86 / $30 cap including all dryrun debugging. Adapter published privately at `krishnakartik/gemma4-judge-sft-checkpoint` and held on Modal volume at `/vol/checkpoints/sft-final/` for Stage 7 consumption. 5/5 probe outputs on the religion-OOD holdout were format-clean; 1 was truncated mid-reasoning at the probe's `max_new_tokens=256` — bump to 384 for Stage 8 eval.
+
+25. **Migrated to Modal for serverless GPU; original Lambda Labs A100-80GB plan dropped.** Modal A100-40GB is sufficient (23 GB peak), per-second billing eliminates idle cost, layered image cache makes iteration cheap (~$0.10/dryrun after first build). Pattern: private `@app.function` for remote work, `@app.local_entrypoint` with budget gating for invocation. Cost ledger at `train/.cost_ledger.jsonl` (gitignored, per-developer) mirrors the Stage 4/5 pattern with `record_cost`, `total_spend`, and `BudgetExceededError` plus interactive `CONTINUE` prompt or `BUDGET_OVERRIDE=1` env override. `try`/`finally` recording so failed runs still log spend.
+
+26. **Stage 6 required multiple Unsloth/TRL/HF-datasets stack workarounds.** Each failure mode was found by reading library source after a Modal run:
+    a. Unsloth source-injects code into `SFTTrainer.__init__` (`unsloth/models/rl.py:1195`) that overrides `dataset_num_proc=None` to ~21 on fork-style Linux. HF datasets at `arrow_dataset.py:3318` then spawns a multiprocess Pool for any `num_proc >= 1`, which fails to pickle the Unsloth-patched processing class (references `torch._dynamo.config.ConfigModuleInstance`). Fix: pre-tokenize CPU-side single-process via a custom `_pretokenize` helper, then pass `dataset_kwargs={"skip_prepare_dataset": True}` to `SFTConfig` so TRL respects the prepared rows.
+    b. `unsloth.chat_templates.train_on_responses_only` auto-computes the same large `num_proc` and triggers the same pickle error. Fix: invoke with `return_function=True` to get just the masking callable, then apply via single-process `dataset.map`.
+    c. TRL 0.24's `SFTTrainer.compute_loss` subscripts `outputs.logits.shape` for entropy logging (`sft_trainer.py:1105`), which fails when Unsloth's cut-cross-entropy optimization returns a lazy callable. Fix: `os.environ["UNSLOTH_RETURN_LOGITS"] = "1"` *before* model load.
+    d. TRL 0.24 renamed `tokenizer=` → `processing_class=` and moved `max_seq_length` → `max_length` (now on `SFTConfig`).
+    e. Gemma 4 ships a multimodal `Gemma4Processor` not a plain text tokenizer; `tokenizer("text", ...)` mis-routes positional arg. Fix: always call with `text=` kwarg.
+
+27. **`lora_dropout = 0` (not the primer-implied 0.05).** Researched after Unsloth's runtime warning that `dropout > 0` disables a fast-patch path. PEFT's `LoraConfig` defaults to 0.0; Unsloth's official LoRA hyperparameters guide explicitly recommends 0 unless overfitting is observed; Sebastian Raschka's "Hundreds of Experiments" article fixed dropout at 0.05 across every run but never ablated it and excluded it from the "hyperparameters that matter" list; Lin et al. (ICLR 2025) "LoRA Dropout as a Sparsity Regularizer" labels standard dropout-on-LoRA an "unreliable regularizer" for short fine-tuning. Empirical confirmation on our 50-row dryrun: switching 0.05 → 0 gave **68% steps/sec speedup** (0.028 → 0.047) with identical loss (8.852 → 8.856; within noise). Other regularizers (r=16, 3 epochs, weight_decay=0.01, distillation labels) cover the small-dataset overfit risk. Documented in `train/configs/README.md`.
+
+28. **HF namespace correction: `krishnakartik` (not `krishnak` or `krishnakartik1`).** Original specs across docs had `krishnak/...`; the actual HF account is `krishnakartik`. Distinct from email `krishnakartik1@gmail.com` and GitHub `github.com/krishnakartik1/reval-judge` (which legitimately retain the `1` — separate identifiers). 15 references updated across `README.md`, `docs/claude-code-prompts.md`, `train/configs/sft.yaml`, `train/configs/README.md`, `tests/test_sft_config.py`. Stage 9 publish targets, Stage 10 Ollama one-liner, Stage 11 Gradio Space all now point at `krishnakartik/`.
 ---
 
 ## Open threads / known constraints
@@ -168,13 +183,11 @@ These are the load-bearing documents. The chat conversations that produced them 
 
 ### Immediate
 
-Stages 3a / 4 / 5 complete. Next on the critical path:
+Stages 3a / 4 / 5 / 6 complete. Next on the critical path:
 
-- **Stage 3b** — hand-label the 300-pair eval set (240 in-dist + 60 OOD religion). 6-10 hours of careful manual work using `data/03b_label_tool.py`. This is the foundation of every reported eval κ in Stage 8, so don't rush.
-- **Stage 6** — SFT training of `unsloth/gemma-4-E4B-it` on `data/formatted/sft.jsonl` (3,844 rows). Dry-run on ~50 rows first per decision #12 before committing to full training. VRAM target: ~14 GB fp16, ~4 GB 4-bit on the Lambda Labs A100 80GB. Author `train/configs/sft.yaml`.
-- **Stage 7** — DPO training on `data/formatted/dpo.jsonl` (2,200 rows) starting from the Stage 6 SFT checkpoint.
-
-3b and 6 can run in parallel — 3b is your time, 6 is GPU time.
+- **Stage 3b** — hand-label the 300-pair eval set (240 in-dist + 60 OOD religion). 6-10 hours of careful manual work using `data/03b_label_tool.py`. This is the foundation of every reported eval κ in Stage 8, so don't rush. Can run in parallel with Stage 7 — 3b is your time, 7 is GPU time.
+- **Stage 7** — DPO training on `data/formatted/dpo.jsonl` (2,200 rows) starting from the Stage 6 SFT adapter (Modal volume `/vol/checkpoints/sft-final/` or HF `krishnakartik/gemma4-judge-sft-checkpoint`). Same Modal pattern as Stage 6: pre-tokenize CPU-side, `skip_prepare_dataset=True`, `UNSLOTH_RETURN_LOGITS=1`, budget-gated local entrypoint. DPO is more LR-sensitive than SFT (primer says 5e-6, 1 epoch). Cost projection at A100-40GB: ~$3-5.
+- **Stage 8** — eval harness against the human-labeled 300-pair holdout (in-dist + OOD religion), reporting κ vs Krishna's labels. Bump `max_new_tokens` to 384 in the eval probe — Stage 6 dryrun showed reasoning can run longer than 256 tokens after training (decision #24).
 
 ### v1 build (Stages 3b-10)
 

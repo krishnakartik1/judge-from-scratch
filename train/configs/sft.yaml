@@ -1,0 +1,38 @@
+model_id: "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
+max_seq_length: 2048
+load_in_4bit: true
+
+lora:
+  r: 16
+  lora_alpha: 32
+  target_modules: "all-linear"
+  lora_dropout: 0.0
+  bias: "none"
+  random_state: 3407
+
+training:
+  learning_rate: 2.0e-4
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.05
+  lr_scheduler_type: "cosine"
+  optim: "adamw_8bit"
+  weight_decay: 0.01
+  logging_steps: 10
+  save_strategy: "epoch"
+
+output:
+  checkpoints_dir: "/vol/checkpoints/sft/"
+  final_dir: "/vol/checkpoints/sft-final/"
+
+wandb:
+  project: "judge-from-scratch"
+
+probe:
+  source: "/vol/data/eval_set_unlabeled.jsonl"
+  count: 5
+
+hf_push:
+  repo_id: "krishnakartik/gemma4-judge-sft-checkpoint"
+  private: true

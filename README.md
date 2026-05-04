@@ -12,7 +12,7 @@ The model produced is `gemma4-social-bias-judge`: a fine-tuned Gemma 4 E4B that 
 
 **Comfortable with LoRA, want to see a real pipeline?** Jump to [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md) Appendix B. It covers how to construct training pairs from BBQ, label them with Claude, and format for SFT/DPO. From there, the build itself lives in [`docs/claude-code-prompts.md`](docs/claude-code-prompts.md) — staged prompts you can run through Claude Code one stage at a time.
 
-**Just want the deployment recipe and the model?** See [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md) Step 9 for the deployment overview, and [the model card on HF](https://huggingface.co/krishnak/gemma4-social-bias-judge) for results and a working Ollama one-liner.
+**Just want the deployment recipe and the model?** See [`docs/fine-tuning-primer.md`](docs/fine-tuning-primer.md) Step 9 for the deployment overview, and [the model card on HF](https://huggingface.co/krishnakartik/gemma4-social-bias-judge) for results and a working Ollama one-liner.
 
 **Reading a file directly without this README?** Each doc file has a breadcrumb at the top showing where it fits in the sequence. Follow those if you want the full path.
 
