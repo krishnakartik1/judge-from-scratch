@@ -1,7 +1,7 @@
 """Stage 7 DPO training of Gemma 4 E4B on Modal, on top of Stage 6's
 SFT adapter.
 
-Three entrypoints:
+Four entrypoints:
 
 - ``train_dpo_dryrun`` — first 50 rows × 1 epoch, used as a shake-out
   gate before committing to the full run. With 50 rows, batch 2,
@@ -18,12 +18,17 @@ Three entrypoints:
   worth deploying; the merge is irrelevant to training/eval through
   the adapter and only matters for vLLM, GGUF (Stage 10), and HF
   publishing (Stage 9).
+- ``verify_merged_fp16`` — loads the merged checkpoint as a vanilla
+  HF model and greedy-generates one verdict on a pinned probe pair,
+  asserting the <reasoning>…</reasoning><verdict>X</verdict> shape
+  with no <|think|> leakage. Cheap post-merge sanity check.
 
 Run from project root::
 
     modal run train/modal/dpo.py::train_dpo_dryrun
     modal run train/modal/dpo.py::train_dpo_full
     modal run train/modal/dpo.py::merge_dpo_to_fp16
+    modal run train/modal/dpo.py::verify_merged_fp16
 
 Both invocations read hyperparameters from ``train/configs/dpo.yaml``.
 Override the GPU variant with the ``MODAL_GPU`` env var (local-only;
@@ -1103,6 +1108,177 @@ def merge_dpo_to_fp16() -> None:
         )
         print(
             f"\n[cost] DPO merge recorded: ${row['est_cost_usd']:.3f} "
+            f"({actual_wallclock_s:.1f}s wallclock, {notes_status}). "
+            f"Cumulative spend: ${total_spend():.2f}"
+        )
+
+
+# --- Post-merge spot check -----------------------------------------------
+#
+# Loads /vol/checkpoints/merged-fp16/ as a vanilla HuggingFace fp16 model
+# (no PEFT, no Unsloth optimizations needed for one-off generation),
+# generates a single verdict on a pinned probe pair, and asserts the
+# output has the expected <reasoning>…</reasoning><verdict>X</verdict>
+# shape with no <|think|> leakage. Cheap sanity check that the merge
+# didn't corrupt anything before we ship the artifact to vLLM/GGUF.
+SPOT_CHECK_TIMEOUT_S = 600
+SPOT_CHECK_PAIR_ID = "8d2242064d47609d"  # religion bias, easy probe
+
+
+def _spot_check_merged_fp16(
+    cfg: dict[str, Any], pair_id: str, max_new_tokens: int
+) -> dict[str, Any]:
+    """Greedy-generate one verdict against the merged fp16 model."""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    if PROBE_DIR not in sys.path:
+        sys.path.insert(0, PROBE_DIR)
+    from _format_helpers import apply_chat, build_user_message  # noqa: E402
+
+    merged_dir = cfg["output"]["merged_fp16_dir"]
+    if not Path(merged_dir, "config.json").exists():
+        raise FileNotFoundError(
+            f"No config.json at {merged_dir}. Run merge_dpo_to_fp16 first."
+        )
+
+    eval_rows = _load_probe_rows()
+    matches = [r for r in eval_rows if r["pair_id"] == pair_id]
+    if not matches:
+        raise ValueError(f"pair_id {pair_id} not found in {EVAL_DATA}")
+    row = matches[0]
+
+    tokenizer = AutoTokenizer.from_pretrained(merged_dir)
+    model = AutoModelForCausalLM.from_pretrained(
+        merged_dir,
+        dtype=torch.bfloat16,
+        device_map="cuda",
+    )
+    model.eval()
+
+    system_prompt = Path(f"{PROBE_DIR}/judge_system_prompt.md").read_text()
+    user_msg = build_user_message(row, swap=False)
+    text_tok = tokenizer.tokenizer if hasattr(tokenizer, "tokenizer") else tokenizer
+    prompt = apply_chat(text_tok, system_prompt, user_msg)
+    if not prompt.endswith("<|turn>model\n"):
+        raise AssertionError(f"Prompt suffix mismatch: {prompt[-60:]!r}")
+
+    inputs = text_tok(prompt, return_tensors="pt").to("cuda")
+    with torch.no_grad():
+        out = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            pad_token_id=text_tok.eos_token_id,
+        )
+    generated = text_tok.decode(
+        out[0][inputs.input_ids.shape[1] :], skip_special_tokens=False
+    )
+
+    if "<|think|>" in generated:
+        raise AssertionError("Generated text contains <|think|> — thinking mode leak")
+
+    import re
+
+    has_reasoning = bool(re.search(r"<reasoning>.*?</reasoning>", generated, re.DOTALL))
+    verdict_match = re.search(r"<verdict>\s*([ABT][^<]*?)\s*</verdict>", generated)
+    if not has_reasoning:
+        raise AssertionError("Generated text missing <reasoning>...</reasoning> block")
+    if not verdict_match:
+        raise AssertionError("Generated text missing <verdict>...</verdict> block")
+
+    return {
+        "pair_id": pair_id,
+        "bias_category": row.get("bias_category"),
+        "verdict": verdict_match.group(1).strip(),
+        "format_ok": True,
+        "no_thinking_leak": True,
+        "generated": generated,
+    }
+
+
+@app.function(
+    image=image,
+    gpu=MODAL_GPU,
+    timeout=SPOT_CHECK_TIMEOUT_S,
+    volumes={"/vol": volume},
+    secrets=secrets,
+)
+def _verify_merged_fp16_remote(
+    pair_id: str = SPOT_CHECK_PAIR_ID, max_new_tokens: int = 384
+) -> dict[str, Any]:
+    """Greedy-generate one verdict against the merged fp16 model."""
+    cfg = load_config(CONFIG_REMOTE)
+    result = _spot_check_merged_fp16(cfg, pair_id, max_new_tokens)
+    print("\n=== Merged-fp16 spot check ===")
+    print(f"pair_id:        {result['pair_id']}")
+    print(f"bias_category:  {result['bias_category']}")
+    print(f"verdict:        {result['verdict']}")
+    print(f"format_ok:      {result['format_ok']}")
+    print(f"thinking_leak:  {not result['no_thinking_leak']}")
+    print("\n--- generated text ---")
+    print(result["generated"])
+    print("--- end generated ---\n")
+    return result
+
+
+@app.local_entrypoint()
+def verify_merged_fp16(
+    pair_id: str = SPOT_CHECK_PAIR_ID, max_new_tokens: int = 384
+) -> None:
+    """Spot-check the merged fp16 artifact with a single greedy generation.
+
+    Run from project root after a successful merge_dpo_to_fp16::
+
+        modal run train/modal/dpo.py::verify_merged_fp16
+        modal run train/modal/dpo.py::verify_merged_fp16 --pair-id <id>
+    """
+    import time
+
+    from train.modal._cost_ledger import (
+        STAGE7_BUDGET_CAP_USD,
+        check_budget,
+        project_cost,
+        record_cost,
+        total_spend,
+    )
+
+    projected = project_cost(MODAL_GPU, SPOT_CHECK_TIMEOUT_S)
+    spent = total_spend()
+    check_budget(
+        projected,
+        spent_usd=spent,
+        cap_usd=STAGE7_BUDGET_CAP_USD,
+        label=f"dpo-merge-verify on {MODAL_GPU}",
+    )
+
+    t0 = time.time()
+    result: dict[str, Any] | None = None
+    notes_status = "ok"
+    try:
+        result = _verify_merged_fp16_remote.remote(pair_id, max_new_tokens)
+    except Exception as exc:  # noqa: BLE001
+        notes_status = f"failed:{type(exc).__name__}"
+        raise
+    finally:
+        actual_wallclock_s = time.time() - t0
+        if result is not None:
+            notes = (
+                f"status={notes_status} "
+                f"pair_id={result.get('pair_id')} "
+                f"verdict={result.get('verdict')}"
+            )
+        else:
+            notes = f"status={notes_status}"
+        row = record_cost(
+            stage="stage7",
+            function="verify_merged_fp16",
+            gpu=MODAL_GPU,
+            wallclock_s=actual_wallclock_s,
+            notes=notes,
+        )
+        print(
+            f"\n[cost] DPO merge verify recorded: ${row['est_cost_usd']:.3f} "
             f"({actual_wallclock_s:.1f}s wallclock, {notes_status}). "
             f"Cumulative spend: ${total_spend():.2f}"
         )
