@@ -26,9 +26,9 @@ The prompts are deliberately scoped narrow. "Build me the project" is a bad prom
 **No native thinking mode.** The judge uses custom `<reasoning>...</reasoning><verdict>...</verdict>` tags. The system prompt does NOT contain `<|think|>` anywhere — not at training time, not at eval time, not in the published Modelfile, not in user-facing instructions. Train and infer with the same configuration.
 
 **HF artifact names:**
-- Model (fp16): `krishnak/gemma4-social-bias-judge`
-- GGUF: `krishnak/gemma4-social-bias-judge-gguf`
-- Dataset: `krishnak/gemma4-social-bias-judge-pairs`
+- Model (fp16): `krishnakartik/gemma4-social-bias-judge`
+- GGUF: `krishnakartik/gemma4-social-bias-judge-gguf`
+- Dataset: `krishnakartik/gemma4-social-bias-judge-pairs`
 
 ---
 
@@ -580,74 +580,263 @@ Don't proceed to Stage 6 until I review.
 The first GPU-spending stage. Targets Gemma 4 E4B.
 
 ```
-Build the SFT training script.
+Build Stage 6 of the pipeline: SFT training of Gemma 4 E4B on the
+formatted SFT dataset. Training runs on Modal (serverless GPU);
+code authoring happens locally.
 
 Read docs/fine-tuning-primer.md Steps 2-5 (LoRA, QLoRA, Unsloth,
-SFT) and "Hyperparameters that actually matter." Also read
-project-status.md decisions #12 (Gemma 4 E4B) and #13 (thinking
-mode disabled).
+SFT) and "Hyperparameters that actually matter." Read
+docs/project-status.md decisions #12 (Gemma 4 E4B target),
+#13 (thinking mode disabled, custom tags), and Stage 5 outputs
+(SFT row count, format).
 
-Before writing code, verify with `web_search`:
-1. The exact Unsloth model ID for Gemma 4 E4B fine-tuning (check
-   Unsloth's HF collection).
-2. That Unsloth's current release supports Gemma 4 fine-tuning with
-   FastLanguageModel and LoRA adapters.
-3. Whether Gemma 4 E4B has any specific kwargs needed in
-   FastLanguageModel.from_pretrained().
+Project lives at ~/Documents/reval-judge (the directory is named
+reval-judge for historical reasons but the project is
+judge-from-scratch — don't rename mid-stage). All Stage 6 code
+goes under train/ in the repo. Modal-specific code lives in
+train/modal/. Local-runnable scripts (configs, validators) stay
+in train/.
 
-Write train/sft.py:
+PROJECT-WIDE INVARIANTS (must hold throughout):
+- Fine-tuning target: unsloth/gemma-4-E4B-it (verified Stage 5;
+  do not re-verify, use this ID directly).
+- Native thinking mode disabled. No <|think|> in any system
+  prompt anywhere. Stage 5 verified the SFT data is clean of it;
+  Stage 6 must preserve that.
+- Custom <reasoning>...</reasoning><verdict>X</verdict> tags
+  are the target format. The chat template is Gemma 4's native
+  one (uses <|turn> / <turn|> tokens, NOT <start_of_turn> —
+  decision verified in Stage 5).
+- Use the same tokenizer.apply_chat_template() pipeline as
+  Stage 5. Do not hand-roll templates.
 
-MODEL: the Gemma 4 E4B variant identified above, loaded with
-FastLanguageModel, load_in_4bit=True. Apply LoRA with:
-  r=16, lora_alpha=32, target_modules=all linear layers,
-  lora_dropout=0.05, bias="none", random_state=3407
+============================================================
+STEP 1 — MODAL SMOKE TEST (run before writing training code)
+============================================================
 
-Memory expectation: ~4-5 GB for the 4-bit base + adapter overhead.
-Should fit comfortably on a 12 GB+ GPU.
+Goal: verify Modal + uv_sync + Unsloth + Gemma 4 E4B + 4-bit
+quantization all work together on a Modal A100 BEFORE writing
+real training code. Catching environment failures here costs
+~$0.30; catching them mid-SFT costs hours.
 
-DATA: data/formatted/sft.jsonl. Use SFTTrainer from TRL.
+Write train/modal/smoke_test.py:
 
-CHAT TEMPLATE: rely on the tokenizer's apply_chat_template
-mechanism. Do NOT hand-roll templates.
+import modal
 
-THINKING MODE: NOT enabled. The system prompt in the data does not
-contain `<|think|>`. Verify this once at the start of the training
-script — read the first SFT row, assert no `<|think|>` appears
-anywhere. If it does, abort with a clear error message.
+app = modal.App("judge-smoke-test")
 
-CONFIG (in train/configs/sft.yaml):
-  learning_rate: 2e-4
-  num_train_epochs: 3
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 4
-  warmup_ratio: 0.05
-  lr_scheduler_type: cosine
-  optim: adamw_8bit
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .add_local_file("pyproject.toml", "/root/pyproject.toml", copy=True)
+    .add_local_file("uv.lock", "/root/uv.lock", copy=True)
+    .uv_sync()
+)
+
+@app.function(image=image, gpu="A100", timeout=900)
+def check_env():
+    import torch
+    from unsloth import FastLanguageModel
+    import trl, peft, transformers
+
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"Device: {torch.cuda.get_device_name(0)}")
+    print(f"Total VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    print(f"torch: {torch.__version__}")
+    print(f"transformers: {transformers.__version__}")
+    print(f"trl: {trl.__version__}")
+    print(f"peft: {peft.__version__}")
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name="unsloth/gemma-4-E4B-it",
+        max_seq_length=2048,
+        load_in_4bit=True,
+    )
+    vram_after_load = torch.cuda.memory_allocated() / 1e9
+    print(f"VRAM after model load: {vram_after_load:.2f} GB")
+
+    # Sanity: 4-bit Gemma 4 E4B should be ~4-5 GB. Hard fail
+    # if outside that range.
+    assert 3.5 < vram_after_load < 6.5, (
+        f"Unexpected VRAM after load ({vram_after_load:.2f} GB) — "
+        f"4-bit quantization may not have taken. Expected ~4-5 GB."
+    )
+
+    inputs = tokenizer("Hello world", return_tensors="pt").to("cuda")
+    with torch.no_grad():
+        out = model.generate(**inputs, max_new_tokens=10, do_sample=False)
+    generated = tokenizer.decode(out[0])
+    print(f"Generated: {generated!r}")
+
+    return {
+        "vram_gb": vram_after_load,
+        "device": torch.cuda.get_device_name(0),
+        "generated": generated,
+    }
+
+@app.local_entrypoint()
+def main():
+    result = check_env.remote()
+    print(f"\nSmoke test PASSED: {result}")
+
+Run: `modal run train/modal/smoke_test.py` from project root.
+
+Required output checklist (all must be true to proceed):
+- "CUDA available: True"
+- Device contains "A100"
+- VRAM after model load: 4.0-5.5 GB (asserts will catch wrong
+  range; if assertion fires, debug before proceeding)
+- Generated text is coherent (not random tokens)
+- Modal dashboard shows ~$0.20-0.50 cost for the run
+
+If any check fails, STOP and tell me what went wrong. Common
+failure modes to watch for:
+- A100 unavailable → switch to gpu="A10" for the smoke test only
+  (Stage 6 full training still needs A100)
+- uv_sync excludes deps → check if pyproject.toml has them in
+  [project] dependencies vs [dependency-groups]
+- flash-attn build hangs → may need explicit torch install
+  before unsloth in the image spec
+- Wrong chat template tokens at inference → would show in the
+  generated output looking malformed
+
+Wait for my confirmation that smoke test passed before STEP 2.
+
+============================================================
+STEP 2 — UPLOAD SFT DATA TO PERSISTENT VOLUME
+============================================================
+
+Create a Modal volume `judge-from-scratch` and upload the SFT
+formatted data to it.
+
+Write train/modal/upload_data.py — a small script that:
+1. Creates the volume if not exists.
+2. Uploads data/formatted/sft.jsonl to /vol/data/sft.jsonl.
+3. (Pre-staged) Reserves space for data/formatted/dpo.jsonl
+   to be uploaded similarly when Stage 7 runs.
+
+Run via: `modal volume put judge-from-scratch data/formatted/sft.jsonl /data/sft.jsonl`
+(or via the script — your call which is cleaner).
+
+Verify: `modal volume ls judge-from-scratch /data/`.
+
+============================================================
+STEP 3 — SFT TRAINING SCRIPT
+============================================================
+
+Write train/modal/sft.py and train/configs/sft.yaml.
+
+CONFIG (train/configs/sft.yaml):
+  model_id: "unsloth/gemma-4-E4B-it"
   max_seq_length: 2048
-  weight_decay: 0.01
-  logging_steps: 10
-  save_strategy: epoch
+  load_in_4bit: true
+  lora:
+    r: 16
+    lora_alpha: 32
+    target_modules: "all-linear"
+    lora_dropout: 0.05
+    bias: "none"
+    random_state: 3407
+  training:
+    learning_rate: 2.0e-4
+    num_train_epochs: 3
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+    warmup_ratio: 0.05
+    lr_scheduler_type: "cosine"
+    optim: "adamw_8bit"
+    weight_decay: 0.01
+    logging_steps: 10
+    save_strategy: "epoch"
+  output:
+    checkpoints_dir: "/vol/checkpoints/sft/"
+    final_dir: "/vol/checkpoints/sft-final/"
 
-TRACKING: integrate Weights & Biases. Project name
-"judge-from-scratch", run name from datetime + "sft".
+MODAL APP STRUCTURE:
+- Same image as smoke test (uv_sync from pyproject.toml + uv.lock).
+- Mount volume `judge-from-scratch` at /vol.
+- Function 1: train_sft_dryrun (50 rows, 1 epoch, GPU=A100,
+  timeout=1800).
+- Function 2: train_sft_full (full dataset, 3 epochs, GPU=A100,
+  timeout=21600 = 6 hours).
+- Both functions read config from train/configs/sft.yaml
+  (loaded into image via add_local_file).
+- W&B integration: project="judge-from-scratch",
+  run_name from datetime + ("sft-dryrun" or "sft-full"),
+  WANDB_API_KEY pulled from Modal Secret.
 
-OUTPUT: outputs/sft-checkpoints/, with the final adapter at
-outputs/sft-final/.
+THINKING-MODE ASSERTION (mandatory startup check):
+Before any training begins, the function reads the first SFT row
+from /vol/data/sft.jsonl and asserts no <|think|> token appears
+in any field. If found, raise immediately.
 
-DRY RUN PROTOCOL (mandatory — Gemma 4 was 2 weeks old at project
-start and has reports of OOM and broken-quantization issues during
-early fine-tuning attempts):
+DRY-RUN PROTOCOL (must pass before full run):
+1. Train 50 rows for 1 epoch.
+2. After training completes, load the resulting adapter and run
+   inference on 5 held-out pairs (use last 5 rows of sft.jsonl
+   as held-out — they'll be re-seen in full training but for
+   dry-run validation it's fine).
+3. Print:
+   - Peak VRAM during training
+   - Wall-clock time
+   - 5 generated outputs verbatim
+   - Confirm format: each output should contain
+     <reasoning>...</reasoning><verdict>X</verdict>
+   - Confirm no <|think|> or <thinking> in any generated output
 
-Before launching the full training run:
-1. Run a 50-row, 1-epoch training to verify the pipeline works
-   end-to-end. Log VRAM usage.
-2. After the dry run, load the trained adapter and run inference
-   on 5 held-out pairs (without thinking mode). Print the generated
-   verdicts.
+DRY-RUN GATE (must pass):
+- VRAM stays under 30 GB (well below A100 40GB)
+- No OOM, no broken-quantization symptoms (logits not garbage,
+  loss not NaN)
+- All 5 dry-run inferences produce well-formed
+  <reasoning>/<verdict> output
+- No <|think|> token anywhere
+- Wall-clock time for 50 rows × 1 epoch is under 10 minutes
+  (extrapolation: full 3,844 rows × 3 epochs ≈ 4-6 hours)
 
-Don't run the full training yet. Show me the script, the config
-file, the dry-run output, and the expected GPU memory + wall-clock
-time, and wait for confirmation.
+If gate fails, STOP and report. Do not run full SFT.
+
+CHECKPOINT PUSH (insurance):
+After full training completes successfully, push the final
+adapter to a private HF repo (krishnakartik/gemma4-judge-sft-checkpoint
+or similar). Use HF_TOKEN from Modal Secret. Cheap insurance
+against Modal volume issues — ~30 seconds, irreversible loss
+prevention.
+
+============================================================
+STEP 4 — REPORT
+============================================================
+
+After full SFT training completes, show me:
+- Total wall-clock time
+- Peak VRAM
+- Final training loss
+- W&B run URL
+- Path to final adapter on the volume
+- HF repo URL of the pushed checkpoint
+- 5 inference outputs from the trained model on the same 5
+  held-out pairs from the dry run, side-by-side with what
+  the dry-run model produced (qualitative: did the model
+  actually improve from base+50-rows to full-train?)
+- Total Modal cost for the SFT phase
+
+Wait for my review before considering Stage 6 done. Do NOT
+proceed to Stage 7 until I confirm.
+
+============================================================
+WORKFLOW NOTES
+============================================================
+
+- All `modal run` commands execute from project root.
+- Code authoring happens locally; you (Claude Code) write the
+  files. Modal pulls them into the container at function
+  invocation time via add_local_file or its automatic project
+  syncing.
+- Modal Secrets needed: WANDB_API_KEY, HF_TOKEN. I'll create
+  these via `modal secret create` separately; assume they exist
+  in the Modal account.
+- Don't try to run training inline in Claude Code — these are
+  multi-hour jobs invoked via `modal run` from the shell. You
+  write the code; I run it.
 ```
 
 ---
@@ -788,11 +977,11 @@ Write three scripts under publish/:
 
 3. publish/upload_hf.py:
    - Upload three artifacts to Hugging Face:
-     a. krishnak/gemma4-social-bias-judge — merged fp16 model
+     a. krishnakartik/gemma4-social-bias-judge — merged fp16 model
         with full model card.
-     b. krishnak/gemma4-social-bias-judge-gguf — GGUF quantizations
+     b. krishnakartik/gemma4-social-bias-judge-gguf — GGUF quantizations
         with Modelfile and Ollama instructions.
-     c. krishnak/gemma4-social-bias-judge-pairs — SFT and DPO
+     c. krishnakartik/gemma4-social-bias-judge-pairs — SFT and DPO
         training datasets with a dataset card.
    - Use huggingface_hub. Read HF_TOKEN from .env.
    - The model card MUST include:
@@ -808,7 +997,7 @@ Write three scripts under publish/:
        time — doing so will produce degraded, untrained behavior."
      * Output format spec: `<reasoning>...</reasoning><verdict>A|B|TIE</verdict>`
      * A working Ollama one-liner so users can try it in 30 seconds:
-       `ollama run hf.co/krishnak/gemma4-social-bias-judge-gguf:Q8_0`
+       `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0`
 
 For the model card, generate a draft from the eval results JSON
 file. I will hand-edit it before uploading. Don't auto-publish —
@@ -845,7 +1034,7 @@ Write the following under deployment/:
 1. deployment/ollama/README.md:
    - Step-by-step instructions for pulling the published GGUF and
      running it locally via Ollama.
-   - Working one-liner: `ollama run hf.co/krishnak/gemma4-social-bias-judge-gguf:Q8_0`
+   - Working one-liner: `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0`
    - Example curl command and Python client (using openai SDK
      pointed at Ollama's OpenAI-compatible endpoint at
      http://localhost:11434/v1).
@@ -859,7 +1048,7 @@ Write the following under deployment/:
    - Base image: vllm/vllm-openai (latest tag).
    - Mount or download the merged fp16 model from HF.
    - ENTRYPOINT runs vLLM's OpenAI-compatible server with
-     appropriate flags for Gemma 4 E4B (--model krishnak/gemma4-social-bias-judge,
+     appropriate flags for Gemma 4 E4B (--model krishnakartik/gemma4-social-bias-judge,
      --max-model-len 2048, --dtype bfloat16, --port 8000).
 
 3. deployment/vllm/docker-compose.yml:
@@ -980,7 +1169,7 @@ Write the following:
      is known.
 
 9. HF Space (deferred Tier 1 demo):
-   - Create a Gradio app at huggingface.co/spaces/krishnak/gemma4-social-bias-judge-demo.
+   - Create a Gradio app at huggingface.co/spaces/krishnakartik/gemma4-social-bias-judge-demo.
    - Auto-sleep enabled to bound costs.
    - UI: two text boxes (Response A, Response B) plus a question
      field, a "Judge" button, and an output panel showing reasoning

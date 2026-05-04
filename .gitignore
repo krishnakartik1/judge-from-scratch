@@ -91,6 +91,15 @@ train/checkpoints/
 adapters/
 merged/
 
+# Stage 6 cost ledger — gitignored by default; un-ignore explicitly if
+# you want spend history committed (Stages 4 and 5 do; Stage 6 doesn't
+# yet because GPU-cost ledger is per-developer, not per-project).
+train/.cost_ledger.jsonl
+
+# Modal CLI cache + Wandb local run logs (Stage 6 will create these)
+.modal/
+wandb/
+
 # Caches
 .cache/
 .huggingface/
