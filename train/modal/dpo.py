@@ -1,7 +1,7 @@
 """Stage 7 DPO training of Gemma 4 E4B on Modal, on top of Stage 6's
 SFT adapter.
 
-Two entrypoints sharing the same training routine:
+Three entrypoints:
 
 - ``train_dpo_dryrun`` — first 50 rows × 1 epoch, used as a shake-out
   gate before committing to the full run. With 50 rows, batch 2,
@@ -9,11 +9,21 @@ Two entrypoints sharing the same training routine:
   over-collapse verdict it produces is a smoke check, not a quality
   gate. The detector earns its keep on the full run (~137 steps).
 - ``train_dpo_full`` — full DPO pool × 1 epoch, production run.
+  Saves an adapter at /vol/checkpoints/dpo-final/. Does NOT produce
+  the merged-fp16 artifact — call ``merge_dpo_to_fp16`` separately
+  once you've reviewed the metrics.
+- ``merge_dpo_to_fp16`` — reloads the saved DPO adapter at fp16,
+  folds it into the base, writes /vol/checkpoints/merged-fp16/.
+  Standalone so the operator can decide post-hoc whether the run is
+  worth deploying; the merge is irrelevant to training/eval through
+  the adapter and only matters for vLLM, GGUF (Stage 10), and HF
+  publishing (Stage 9).
 
 Run from project root::
 
     modal run train/modal/dpo.py::train_dpo_dryrun
     modal run train/modal/dpo.py::train_dpo_full
+    modal run train/modal/dpo.py::merge_dpo_to_fp16
 
 Both invocations read hyperparameters from ``train/configs/dpo.yaml``.
 Override the GPU variant with the ``MODAL_GPU`` env var (local-only;
@@ -32,16 +42,51 @@ double VRAM (~32 GB extra at fp16) and is explicitly avoided here.
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
 import json
 import logging
 import os
 import shutil
 import sys
+import types
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import modal
+
+
+# TRL 0.24 has broken optional-dep gates: trl/import_utils.py stores the
+# tuple returned by transformers.utils.import_utils._is_package_available
+# (which in transformers v5+ always returns (available, version), even
+# without return_version=True) into _<pkg>_available. Tuples like
+# (False, None) are truthy, so is_<pkg>_available() unconditionally fires
+# `import <pkg>` at module-load time — failing for any optional dep that
+# isn't installed.
+#
+# DPOTrainer's import chain hits two such gates we don't use:
+#   - llm_blender (trl/trainer/judges.py:29 — for BasePairwiseJudge)
+#   - weave        (trl/trainer/callbacks.py:58 — for W&B Weave tracing)
+# Stubs satisfy the module-load-time `import` only. Class-body attribute
+# references inside the gated blocks are lazy and never resolved at
+# runtime unless someone instantiates LLMBlenderJudge / WeaveCallback,
+# which the DPO training path never does (verified: zero references in
+# trl/trainer/dpo_trainer.py).
+def _stub_module(name: str, attrs: dict[str, Any] | None = None) -> Any:
+    if name in sys.modules:
+        return sys.modules[name]
+    mod = types.ModuleType(name)
+    mod.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    for k, v in (attrs or {}).items():
+        setattr(mod, k, v)
+    sys.modules[name] = mod
+    return mod
+
+
+_stub_module("llm_blender")
+_stub_module("weave", {"EvaluationLogger": object})
+_stub_module("weave.trace")
+_stub_module("weave.trace.context", {"weave_client_context": object})
 
 logger = logging.getLogger(__name__)
 
@@ -439,8 +484,19 @@ def _train(mode: Literal["dryrun", "full"]) -> dict[str, Any]:
     cfg = load_config(CONFIG_REMOTE)
 
     # Tokenizer ↔ Stage 5 parity check, mirrors sft.py:382-388.
+    # Stage 5's format-dpo phase used the upstream `unsloth/gemma-4-E4B-it`
+    # tokenizer; Stage 6/7 train on the BNB-4bit variant
+    # `unsloth/gemma-4-E4B-it-unsloth-bnb-4bit`. The two share the same
+    # tokenizer/vocab/chat-template — BNB only quantizes weights — so
+    # accept either by stripping the `-unsloth-bnb-4bit` suffix before
+    # comparing.
+    def _normalize_model_id(mid: str) -> str:
+        return mid.removesuffix("-unsloth-bnb-4bit")
+
     dpo_meta = json.loads(Path(DPO_META_REMOTE).read_text())
-    if dpo_meta.get("tokenizer_model_id") != cfg["model_id"]:
+    if _normalize_model_id(
+        dpo_meta.get("tokenizer_model_id", "")
+    ) != _normalize_model_id(cfg["model_id"]):
         raise AssertionError(
             f"Tokenizer mismatch: Stage 5 used "
             f"{dpo_meta.get('tokenizer_model_id')!r}, Stage 7 config has "
@@ -499,19 +555,66 @@ def _train(mode: Literal["dryrun", "full"]) -> dict[str, Any]:
         remove_unused_columns=False,
     )
 
-    trainer = DPOTrainer(
-        model=model,
-        # ref_model=None: TRL uses model.disable_adapter() for the
-        # reference forward — see module docstring for semantics.
-        ref_model=None,
-        args=args,
-        train_dataset=train_ds,
-        processing_class=tokenizer,
-        # peft_config=None is non-negotiable: DPOTrainer._prepare_peft_model
-        # (dpo_trainer.py:578-580) calls merge_and_unload if both a PeftModel
-        # and a peft_config are passed — that would erase the SFT adapter.
-        peft_config=None,
+    # TRL 0.24 + transformers 5.5 compat: DPOTrainer.__init__ writes
+    # `model.warnings_issued["estimate_tokens"] = True` (dpo_trainer.py:405)
+    # to suppress an FA estimate_tokens warning, but
+    # Gemma4ForConditionalGeneration doesn't initialize the `warnings_issued`
+    # dict on the conditional-generation path. Walk the PEFT wrappers to
+    # the underlying transformers model and seed an empty dict so TRL's
+    # indexed write succeeds.
+    inner = model
+    for attr in ("base_model", "model"):
+        candidate = getattr(inner, attr, None)
+        if candidate is not None and candidate is not inner:
+            inner = candidate
+    if not hasattr(inner, "warnings_issued"):
+        inner.warnings_issued = {}
+
+    # Force text-only DPO path. Gemma 4 E4B is a multimodal
+    # (image+text->text) model — its model_type is in
+    # MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES, which makes
+    # DPOTrainer set is_vision_model=True (dpo_trainer.py:359) and call
+    # `process_row` (line 667) which expects an "images" column on each
+    # row. Our DPO data is text-only — the prompts are pre-rendered chat
+    # templates with no image tokens. Temporarily mask model_type to
+    # "gemma" (text-only Gemma family, not in the multimodal mapping) so
+    # TRL routes to the text-only `tokenize_row` path. Restored after
+    # init since model_type affects nothing else at training time
+    # (forward/loss don't read it).
+    original_model_type = inner.config.model_type
+    inner.config.model_type = "gemma"
+
+    # Pass the inner text-only tokenizer instead of the multimodal
+    # Gemma4Processor. Unsloth monkey-patches the processor's __call__
+    # to require keyword args (images=, text=, videos=) per
+    # unsloth_zoo/tokenizer_utils.py:702. TRL's tokenize_row
+    # (dpo_trainer.py:724) calls `tokenizer(features["prompt"], ...)`
+    # positionally — Unsloth's patch then routes the prompt string into
+    # `images=` and leaves `text=None`, blowing up downstream. The inner
+    # `.tokenizer` attribute on the multimodal processor is a plain
+    # Gemma4TextTokenizer that's never patched. Same pattern used in
+    # sft.py:192 for pre-tokenization.
+    text_tokenizer = (
+        tokenizer.tokenizer if hasattr(tokenizer, "tokenizer") else tokenizer
     )
+
+    try:
+        trainer = DPOTrainer(
+            model=model,
+            # ref_model=None: TRL uses model.disable_adapter() for the
+            # reference forward — see module docstring for semantics.
+            ref_model=None,
+            args=args,
+            train_dataset=train_ds,
+            processing_class=text_tokenizer,
+            # peft_config=None is non-negotiable:
+            # DPOTrainer._prepare_peft_model (dpo_trainer.py:578-580)
+            # calls merge_and_unload if both a PeftModel and a peft_config
+            # are passed — that would erase the SFT adapter.
+            peft_config=None,
+        )
+    finally:
+        inner.config.model_type = original_model_type
 
     if trainer.ref_model is not None:
         raise AssertionError("Expected ref_model=None for PEFT disable-adapter path")
@@ -600,57 +703,14 @@ def _train(mode: Literal["dryrun", "full"]) -> dict[str, Any]:
             verdict_info.get("n_points", 0),
         )
 
-    # --- 5. Merged fp16 export (gated on verdict) -----------------------
-    merged_ok = False
-    merged_dir = cfg["output"]["merged_fp16_dir"]
-    if verdict_info["verdict"] == "ABORT":
-        logger.warning(
-            "Merge skipped due to ABORT verdict; adapter still saved at %s "
-            "for inspection.",
-            final_dir,
-        )
-    else:
-        del model, trainer
-        torch.cuda.empty_cache()
-        shutil.rmtree(merged_dir, ignore_errors=True)
-        Path(merged_dir).mkdir(parents=True, exist_ok=True)
+    # Free the trainer's references before reloading for inference.
+    # Merge to fp16 is decoupled — run `merge_dpo_to_fp16` separately
+    # against /vol/checkpoints/dpo-final/ once you've eyeballed the
+    # full-run metrics and want a deployable artifact for vLLM/GGUF.
+    del model, trainer
+    torch.cuda.empty_cache()
 
-        merge_model, merge_tok = FastLanguageModel.from_pretrained(
-            model_name=final_dir,
-            max_seq_length=cfg["max_seq_length"],
-            load_in_4bit=False,
-            dtype=torch.bfloat16,
-        )
-        merge_model.save_pretrained_merged(
-            merged_dir,
-            merge_tok,
-            save_method="merged_16bit",
-        )
-        volume.commit()
-
-        if not Path(merged_dir, "config.json").exists():
-            raise AssertionError("Merged checkpoint missing config.json")
-        shards = list(Path(merged_dir).glob("*.safetensors")) or list(
-            Path(merged_dir).glob("pytorch_model*.bin")
-        )
-        if not shards:
-            raise AssertionError("Merged checkpoint has no model weights")
-        total_bytes = sum(s.stat().st_size for s in shards)
-        if total_bytes < 5_000_000_000:
-            raise AssertionError(
-                f"Merged checkpoint suspiciously small: {total_bytes:,} bytes"
-            )
-        logger.info(
-            "Merged fp16 checkpoint at %s: %d shards, %.2f GB total.",
-            merged_dir,
-            len(shards),
-            total_bytes / 1e9,
-        )
-        merged_ok = True
-        del merge_model
-        torch.cuda.empty_cache()
-
-    # --- 6. Probe (always; SFT vs DPO at max_new_tokens=384) -----------
+    # --- 5. Probe (always; SFT vs DPO at max_new_tokens=384) -----------
     eval_rows = _load_probe_rows()
     probe_pair_ids = select_probe_pair_ids(eval_rows, n=cfg["probe"]["count"])
     probe_rows = [r for r in eval_rows if r["pair_id"] in set(probe_pair_ids)]
@@ -704,7 +764,7 @@ def _train(mode: Literal["dryrun", "full"]) -> dict[str, Any]:
     comparison_path = Path(summary_dir, "comparison.json")
     comparison_path.write_text(json.dumps(comparison, indent=2))
 
-    # --- 7. Final volume commit ----------------------------------------
+    # --- 6. Final volume commit ----------------------------------------
     volume.commit()
 
     return {
@@ -718,8 +778,6 @@ def _train(mode: Literal["dryrun", "full"]) -> dict[str, Any]:
         "verdict": verdict_info["verdict"],
         "verdict_reason": verdict_info["reason"],
         "verdict_info": verdict_info,
-        "merged_ok": merged_ok,
-        "merged_dir": merged_dir if merged_ok else None,
         "final_dir": final_dir,
         "summary_path": str(summary_path),
         "comparison_path": str(comparison_path),
@@ -809,7 +867,7 @@ def train_dpo_dryrun() -> None:
                 f"verdict={result.get('verdict')} "
                 f"loss={result.get('final_loss'):.4f} "
                 f"train_s={result.get('wallclock_s'):.1f} "
-                f"merged={result.get('merged_ok')}"
+                f"final_dir={result.get('final_dir')}"
             )
         else:
             notes = f"status={notes_status}"
@@ -872,7 +930,7 @@ def train_dpo_full() -> None:
                 f"verdict={result.get('verdict')} "
                 f"loss={result.get('final_loss'):.4f} "
                 f"train_s={result.get('wallclock_s'):.1f} "
-                f"merged={result.get('merged_ok')}"
+                f"final_dir={result.get('final_dir')}"
             )
         else:
             notes = f"status={notes_status}"
@@ -885,6 +943,166 @@ def train_dpo_full() -> None:
         )
         print(
             f"\n[cost] DPO full recorded: ${row['est_cost_usd']:.2f} "
+            f"({actual_wallclock_s:.1f}s wallclock, {notes_status}). "
+            f"Cumulative spend: ${total_spend():.2f}"
+        )
+
+
+# --- Standalone merge step (decoupled from training) ---------------------
+#
+# Loads /vol/checkpoints/dpo-final/ at fp16 (NOT 4-bit — merging into a
+# quantized base is unsupported), folds the LoRA matrices into the base
+# weights via Unsloth's save_pretrained_merged, and writes the result to
+# /vol/checkpoints/merged-fp16/. ~2-3 min wallclock on A100, ~$0.10.
+#
+# Decoupled from training because:
+#   1. Merge produces an artifact for downstream consumers (vLLM,
+#      llama.cpp GGUF conversion, HF publishing) — irrelevant to
+#      training/eval through the adapter itself.
+#   2. The over-collapse verdict heuristic isn't statistically
+#      meaningful on small step counts (per-batch reward variance
+#      dominates), so gating merge on it produces false negatives
+#      on healthy runs. Letting the operator decide post-hoc is
+#      cleaner than tuning the heuristic.
+MERGE_TIMEOUT_S = 900
+
+
+def _merge_to_fp16(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Reload the DPO adapter at fp16, merge, save, and verify.
+
+    Idempotent: rmtree's the merged dir first so a stale shard layout
+    can't survive into the new merge.
+    """
+    import torch
+    from unsloth import FastLanguageModel
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+
+    final_dir = cfg["output"]["final_dir"]
+    merged_dir = cfg["output"]["merged_fp16_dir"]
+    if not Path(final_dir, "adapter_config.json").exists():
+        raise FileNotFoundError(
+            f"No adapter_config.json at {final_dir}. Run train_dpo_full "
+            "first; the merge consumes the saved adapter."
+        )
+
+    shutil.rmtree(merged_dir, ignore_errors=True)
+    Path(merged_dir).mkdir(parents=True, exist_ok=True)
+
+    torch.cuda.reset_peak_memory_stats()
+    merge_model, merge_tok = FastLanguageModel.from_pretrained(
+        model_name=final_dir,
+        max_seq_length=cfg["max_seq_length"],
+        load_in_4bit=False,  # critical — fp16 merge requires fp16 base
+        dtype=torch.bfloat16,
+    )
+    merge_model.save_pretrained_merged(
+        merged_dir,
+        merge_tok,
+        save_method="merged_16bit",
+    )
+    volume.commit()
+
+    if not Path(merged_dir, "config.json").exists():
+        raise AssertionError("Merged checkpoint missing config.json")
+    shards = list(Path(merged_dir).glob("*.safetensors")) or list(
+        Path(merged_dir).glob("pytorch_model*.bin")
+    )
+    if not shards:
+        raise AssertionError("Merged checkpoint has no model weights")
+    total_bytes = sum(s.stat().st_size for s in shards)
+    if total_bytes < 5_000_000_000:
+        raise AssertionError(
+            f"Merged checkpoint suspiciously small: {total_bytes:,} bytes"
+        )
+    peak_vram_gb = torch.cuda.max_memory_allocated() / 1e9
+    logger.info(
+        "Merged fp16 checkpoint at %s: %d shards, %.2f GB, peak_vram=%.2fGB",
+        merged_dir,
+        len(shards),
+        total_bytes / 1e9,
+        peak_vram_gb,
+    )
+    return {
+        "merged_dir": merged_dir,
+        "shard_count": len(shards),
+        "total_bytes": total_bytes,
+        "peak_vram_gb": peak_vram_gb,
+    }
+
+
+@app.function(
+    image=image,
+    gpu=MODAL_GPU,
+    timeout=MERGE_TIMEOUT_S,
+    volumes={"/vol": volume},
+    secrets=secrets,
+)
+def _merge_dpo_to_fp16_remote() -> dict[str, Any]:
+    """Standalone merge of the DPO adapter into an fp16 checkpoint."""
+    cfg = load_config(CONFIG_REMOTE)
+    result = _merge_to_fp16(cfg)
+    print(f"\nMerge result: {json.dumps(result, indent=2)}")
+    return result
+
+
+@app.local_entrypoint()
+def merge_dpo_to_fp16() -> None:
+    """Budget-gated wrapper around the standalone DPO merge.
+
+    Run from project root after a successful train_dpo_full::
+
+        modal run train/modal/dpo.py::merge_dpo_to_fp16
+
+    Set ``BUDGET_OVERRIDE=1`` in env to skip the interactive prompt.
+    Cost is ~$0.10 (A100, ~2-3 min wallclock for fp16 reload + merge).
+    """
+    import time
+
+    from train.modal._cost_ledger import (
+        STAGE7_BUDGET_CAP_USD,
+        check_budget,
+        project_cost,
+        record_cost,
+        total_spend,
+    )
+
+    projected = project_cost(MODAL_GPU, MERGE_TIMEOUT_S)
+    spent = total_spend()
+    check_budget(
+        projected,
+        spent_usd=spent,
+        cap_usd=STAGE7_BUDGET_CAP_USD,
+        label=f"dpo-merge on {MODAL_GPU}",
+    )
+
+    t0 = time.time()
+    result: dict[str, Any] | None = None
+    notes_status = "ok"
+    try:
+        result = _merge_dpo_to_fp16_remote.remote()
+    except Exception as exc:  # noqa: BLE001
+        notes_status = f"failed:{type(exc).__name__}"
+        raise
+    finally:
+        actual_wallclock_s = time.time() - t0
+        if result is not None:
+            notes = (
+                f"status={notes_status} "
+                f"shards={result.get('shard_count')} "
+                f"bytes={result.get('total_bytes')}"
+            )
+        else:
+            notes = f"status={notes_status}"
+        row = record_cost(
+            stage="stage7",
+            function="merge_dpo_to_fp16",
+            gpu=MODAL_GPU,
+            wallclock_s=actual_wallclock_s,
+            notes=notes,
+        )
+        print(
+            f"\n[cost] DPO merge recorded: ${row['est_cost_usd']:.3f} "
             f"({actual_wallclock_s:.1f}s wallclock, {notes_status}). "
             f"Cumulative spend: ${total_spend():.2f}"
         )
