@@ -43,7 +43,7 @@ substantive work.
 - [x] Stage 1.5: enrichment (data/01b_enrich_candidates.py)
 - [x] Stage 2: pair construction (data/02_construct_pairs.py)
 - [x] Stage 3a: holdout eval set (data/03a_holdout_eval.py)
-- [ ] Stage 3b: hand-label 300 eval pairs (data/03b_label_tool.py)
+- [ ] Stage 3b: hand-label 300 eval pairs (eval/label_tool.py)
 - [x] Stage 4: Claude labeling (data/04_label_pairs.py)
 - [x] Stage 5: dataset formatting (data/05_format_datasets.py)
 - [x] Stage 6: SFT training (Gemma 4 E4B QLoRA on Modal)
