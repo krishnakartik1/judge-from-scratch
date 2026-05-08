@@ -4,6 +4,7 @@ language:
   - en
 library_name: transformers
 base_model: google/gemma-4-E4B-it
+base_model_relation: finetune
 pipeline_tag: text-generation
 tags:
   - judge
@@ -17,6 +18,36 @@ tags:
   - fine-tuned
 datasets:
   - krishnakartik/gemma4-social-bias-judge-pairs
+model-index:
+  - name: gemma4-social-bias-judge
+    results:
+      - task:
+          type: text-classification
+          name: Social-bias judge (A / B / TIE verdict)
+        dataset:
+          type: krishnakartik/gemma4-social-bias-judge-pairs
+          name: Gemma 4 Social Bias Judge Pairs (eval holdout)
+          config: eval_holdout
+          split: train
+        metrics:
+          - type: cohen_kappa
+            name: "Cohen's κ (in-distribution, 240 pairs)"
+            value: 0.682
+          - type: cohen_kappa
+            name: "Cohen's κ (OOD religion, 60 pairs)"
+            value: 0.643
+          - type: cohen_kappa
+            name: "Cohen's κ (subtle-bias bucket)"
+            value: 0.890
+          - type: cohen_kappa
+            name: "Cohen's κ (tie cases)"
+            value: 0.359
+          - type: position_bias_rate
+            name: "Position-bias rate (in-distribution; lower is better)"
+            value: 0.092
+          - type: self_consistency
+            name: "Self-consistency rate (T=0.3)"
+            value: 0.827
 ---
 
 # Gemma 4 E4B — Social-Bias Judge (SFT + DPO)

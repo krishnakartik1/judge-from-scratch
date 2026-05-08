@@ -13,6 +13,19 @@ tags:
   - sft
   - dpo
   - llm-as-judge
+pretty_name: Gemma 4 Social Bias Judge Pairs
+configs:
+  - config_name: sft
+    data_files: sft.jsonl
+    default: true
+  - config_name: dpo
+    data_files: dpo.jsonl
+  - config_name: pairs
+    data_files: pairs.jsonl
+  - config_name: pairs_to_label
+    data_files: pairs_to_label.jsonl
+  - config_name: eval_holdout
+    data_files: eval_set_unlabeled.jsonl
 ---
 
 # gemma4-social-bias-judge-pairs
@@ -50,24 +63,17 @@ This dataset contains:
 
 ## Quick load
 
+The dataset declares five named configs (`sft`, `dpo`, `pairs`,
+`pairs_to_label`, `eval_holdout`) in its YAML front-matter so each
+JSONL file is loadable as a subset:
+
 ```python
 from datasets import load_dataset
 
-sft = load_dataset(
-    "krishnakartik/gemma4-social-bias-judge-pairs",
-    data_files="sft.jsonl",
-    split="train",
-)
-dpo = load_dataset(
-    "krishnakartik/gemma4-social-bias-judge-pairs",
-    data_files="dpo.jsonl",
-    split="train",
-)
-eval_holdout = load_dataset(
-    "krishnakartik/gemma4-social-bias-judge-pairs",
-    data_files="eval_set_unlabeled.jsonl",
-    split="train",
-)
+repo = "krishnakartik/gemma4-social-bias-judge-pairs"
+sft = load_dataset(repo, name="sft", split="train")
+dpo = load_dataset(repo, name="dpo", split="train")
+eval_holdout = load_dataset(repo, name="eval_holdout", split="train")
 ```
 
 `sft` and `dpo` are ready to feed `trl.SFTTrainer` /
@@ -76,6 +82,9 @@ prompt-completion and prompt-chosen-rejected expectations. The
 eval holdout is what the [primary model card's](https://huggingface.co/krishnakartik/gemma4-social-bias-judge#eval-results)
 κ numbers are computed against; use it to validate any retrained
 checkpoint against the same ground truth.
+
+(The `sft` config is the default, so `load_dataset(repo)` returns
+the SFT split.)
 
 ---
 

@@ -40,12 +40,17 @@ for the full explanation.
 
 ## Available tags
 
-| Tag | Checkpoint | Quant | Approx size | Use case |
+| Tag | Checkpoint | Quant | File size | Use case |
 |---|---|---|---|---|
-| `:Q8_0` | DPO (default) | Q8_0 | ~6 GB | Best quality; recommended starting point |
-| `:Q5_K_M` | DPO | Q5_K_M | ~3.5 GB | Smaller; minor quality trade-off |
-| `:Q8_0-sft` | SFT-only | Q8_0 | ~6 GB | Use for OOD bias categories |
-| `:Q5_K_M-sft` | SFT-only | Q5_K_M | ~3.5 GB | Smaller SFT-only |
+| `:Q8_0` | DPO (default) | Q8_0 | 8.03 GB | Best quality; recommended starting point |
+| `:Q5_K_M` | DPO | Q5_K_M | 5.76 GB | Smaller; minor quality trade-off |
+| `:Q8_0-sft` | SFT-only | Q8_0 | 8.03 GB | Use for OOD bias categories |
+| `:Q5_K_M-sft` | SFT-only | Q5_K_M | 5.76 GB | Smaller SFT-only |
+
+(Sizes are larger than typical 4B quantizations because Gemma 4
+E4B has ~8B raw parameters even though it operates at "4B
+effective" via the per-layer-input embedding mechanism. Plan for
+the fp16-baseline equivalent of ~16 GB of disk.)
 
 **If your bias categories are outside BBQ's training set** (politics,
 ideology, novel demographic axes), prefer the `-sft` tags — see the

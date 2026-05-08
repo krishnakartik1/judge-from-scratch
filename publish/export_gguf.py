@@ -55,11 +55,16 @@ MODEL_REGISTRY: dict[str, dict[str, str]] = {
 }
 GGUF_DIR = "/vol/gguf"
 LLAMA_CPP_DIR = "/opt/llama.cpp"
-# Pinning to a specific llama.cpp tag is important — Gemma 4 support
-# landed in May 2026, and master can introduce conversion-script
-# breakages. b6800 is the first Gemma 4-clean release per the
-# llama.cpp release notes.
-LLAMA_CPP_TAG = "b6800"
+# Pinned to ``master`` because Gemma 4 conversion support landed
+# across multiple PRs (#21309 model arch, #21343/#21534 tokenizer,
+# #21390 final_logit_softcapping, #21418 chat parser). Specific
+# tags around the Gemma 4 release (b6800-era) ship the C++ runtime
+# fixes but the Python ``convert_hf_to_gguf.py`` rejected
+# ``Gemma4ForConditionalGeneration`` until later. ``master`` has
+# the full set; reproducibility cost is acceptable for a one-shot
+# export step. Bump to a specific tag (e.g. ``b7500+``) once the
+# upstream releases stabilize.
+LLAMA_CPP_TAG = "master"
 QUANT_TYPES = ("Q8_0", "Q5_K_M")
 MIN_GGUF_BYTES = 2_000_000_000  # ~2 GB floor; Q5_K_M of 8B model ~4 GB
 
@@ -85,8 +90,40 @@ gguf_image = (
             f"cmake --build {LLAMA_CPP_DIR}/build --target llama-quantize -j 4",
             "pip install --no-cache-dir uv",
             (
-                f"uv pip install --system --no-cache "
-                f"-r {LLAMA_CPP_DIR}/requirements.txt"
+                # llama.cpp b6800 is C++-clean for Gemma 4 (the
+                # llama-quantize binary handles the model arch
+                # correctly), but its top-level ``requirements.txt``
+                # pulls a stale
+                # ``transformers @ v4.56.0-Embedding-Gemma-preview``
+                # branch that doesn't recognize the ``gemma4``
+                # model_type — ``convert_hf_to_gguf.py`` then aborts
+                # at ``AutoConfig.from_pretrained``. llama.cpp master's
+                # ``requirements/requirements-convert_legacy_llama.txt``
+                # has updated to ``transformers==5.5.1``; we install
+                # that exact dep set here directly (numpy,
+                # sentencepiece, transformers, gguf-via-bundled-py,
+                # protobuf, safetensors, torch). The ``protobuf<5``
+                # upper bound from master's manifest is dropped
+                # (Modal's mirror only carries protobuf 6.x; the
+                # 4→6 API delta doesn't affect anything
+                # ``convert_hf_to_gguf.py`` uses).
+                # ``--index-strategy unsafe-best-match`` lets uv pull
+                # torch CPU wheels and sentencepiece from secondary
+                # indexes — same fix the vLLM image uses.
+                "uv pip install --system --no-cache "
+                "--index-strategy unsafe-best-match "
+                "numpy "
+                "'sentencepiece>=0.1.98,<0.3.0' "
+                "'transformers>=5.5.0' "
+                "'protobuf>=4.21.0' "
+                "safetensors "
+                "torch "
+                # b6800's convert_hf_to_gguf.py imports mistral_common
+                # at module load (not behind a try/except guard like
+                # master). The Mistral path is dead code for Gemma 4
+                # but the import still has to resolve, so install the
+                # package regardless.
+                "mistral-common"
             ),
         ]
     )
