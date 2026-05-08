@@ -1,4 +1,4 @@
-"""Stage 1 sampler — produce a stratified BBQ sample for REVAL Judge.
+"""Stage 1 sampler — produce a stratified BBQ sample for judge-from-scratch.
 
 Loads HuggingFace ``Elfsong/BBQ`` across all 11 splits and draws a 1,500-row
 sample stratified by ``(category × context_condition × question_polarity)``.
@@ -278,7 +278,7 @@ def format_table(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Sample BBQ for REVAL Judge Stage 1. Stratifies by "
+            "Sample BBQ for judge-from-scratch Stage 1. Stratifies by "
             "(category × condition × polarity)."
         )
     )

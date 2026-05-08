@@ -1,4 +1,4 @@
-"""Shared helpers for REVAL Judge pipeline scripts.
+"""Shared helpers for judge-from-scratch pipeline scripts.
 
 Provides:
     - load_env: load .env into os.environ and surface required keys.

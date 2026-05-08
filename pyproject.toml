@@ -1,5 +1,5 @@
 [project]
-name = "reval-judge"
+name = "judge-from-scratch"
 version = "0.1.0"
 description = "judge-from-scratch — fine-tuning Gemma 4 E4B into a specialized social-bias evaluation judge."
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
     "unsloth",
     "trl",
     "peft",
-    "transformers",
+    "transformers>=5.5.0",
     "datasets",
     "accelerate",
     "bitsandbytes",

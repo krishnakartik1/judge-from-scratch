@@ -1324,7 +1324,7 @@ def submit_openai_batch(
     for attempt in range(SUBMIT_RETRY_ATTEMPTS):
         try:
             buf = io.BytesIO(requests_jsonl_text.encode("utf-8"))
-            buf.name = f"reval-judge-{phase_key}.jsonl"
+            buf.name = f"judge-from-scratch-{phase_key}.jsonl"
             file_obj = client.files.create(file=buf, purpose="batch")
             file_id = getattr(file_obj, "id", None) or file_obj["id"]
             batch = client.batches.create(
@@ -1656,8 +1656,8 @@ def _make_openrouter_async_client() -> Any:
         timeout=60.0,
         max_retries=2,
         default_headers={
-            "HTTP-Referer": "https://github.com/krishnakartik1/reval-judge",
-            "X-Title": "REVAL Judge",
+            "HTTP-Referer": "https://github.com/krishnakartik1/judge-from-scratch",
+            "X-Title": "Judge from Scratch",
         },
     )
 
@@ -2479,9 +2479,7 @@ def run_crosscheck_phase(args: argparse.Namespace) -> int:
                 os.environ["OPENROUTER_API_KEY"], OPENROUTER_MODEL
             )
             deepseek_results = asyncio.run(
-                _run_openrouter_crosscheck(
-                    or_client, todo, rendered, deepseek_model
-                )
+                _run_openrouter_crosscheck(or_client, todo, rendered, deepseek_model)
             )
         except Exception as exc:  # noqa: BLE001 — degrade gracefully
             logger.warning(
@@ -2721,8 +2719,7 @@ def _run_openai_crosscheck(
                 )
                 details = r.usage.get("prompt_tokens_details") or {}
                 usage_totals["cached_tokens"] += int(
-                    details.get("cached_tokens", r.usage.get("cached_tokens", 0))
-                    or 0
+                    details.get("cached_tokens", r.usage.get("cached_tokens", 0)) or 0
                 )
         all_results.extend(chunk_results)
         chunk_cost = compute_cost(
@@ -2848,9 +2845,7 @@ def _run_together_crosscheck(
     if existing.get("status") == "completed" and existing.get("batch_id"):
         batch_id = existing["batch_id"]
         resumed = True
-        logger.info(
-            "Together: re-using completed batch %s (resume).", batch_id
-        )
+        logger.info("Together: re-using completed batch %s (resume).", batch_id)
     else:
         batch_id = submit_together_batch(
             client, requests_jsonl, model, "crosscheck_deepseek"

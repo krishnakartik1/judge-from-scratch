@@ -353,8 +353,8 @@ async def run_generation(
         timeout=REQUEST_TIMEOUT_SEC,
         max_retries=SDK_MAX_RETRIES,
         default_headers={
-            "HTTP-Referer": "https://github.com/krishnakartik1/reval-judge",
-            "X-Title": "REVAL Judge",
+            "HTTP-Referer": "https://github.com/krishnakartik1/judge-from-scratch",
+            "X-Title": "Judge from Scratch",
         },
     )
     try:

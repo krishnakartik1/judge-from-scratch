@@ -48,7 +48,7 @@ substantive work.
 - [x] Stage 5: dataset formatting (data/05_format_datasets.py)
 - [x] Stage 6: SFT training (Gemma 4 E4B QLoRA on Modal)
 - [ ] Stage 7: DPO training
-- [ ] Stage 8: Eval harness + model card
+- [x] Stage 8: Eval harness (vLLM/bf16; in-dist κ 0.48→0.65→0.68)
 - [ ] Stage 9: HuggingFace publish + GGUF export
 - [ ] Stage 10: deployment recipes (Ollama + vLLM)
 
