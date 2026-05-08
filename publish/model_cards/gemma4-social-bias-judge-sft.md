@@ -66,11 +66,13 @@ ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0-sft
 
 ```python
 # Identical usage to the DPO checkpoint — only the model_id changes.
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
 model_id = "krishnakartik/gemma4-social-bias-judge-sft"
 tok = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, dtype="bfloat16", device_map="cuda"
+    model_id, torch_dtype=torch.bfloat16, device_map="cuda"
 )
 # ... see primary model card for the full inference snippet.
 ```

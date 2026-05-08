@@ -26,8 +26,10 @@ fine-tuned Gemma 4 E4B into a specialist social-bias judge
 This dataset contains:
 
 - **`sft.jsonl`** (3,844 rows) — the SFT training set, in TRL
-  prompt-completion shape. 1,938 base pairs × position-swap doubling
-  to teach the judge to mirror verdicts under A/B order swap.
+  prompt-completion shape. 1,922 base pairs surviving the
+  post-label confidence filter (15 low-confidence rows dropped from
+  the 1,938-pair labeling input), doubled by position swap to teach
+  the judge to mirror verdicts under A/B order swap.
 - **`dpo.jsonl`** (2,200 rows) — the DPO preference set in TRL
   prompt/chosen/rejected shape. 70% of rejecteds synthesized by
   Sonnet 4.6 as plausible-but-wrong reasoning; 30% verdict-flipped
@@ -43,6 +45,37 @@ This dataset contains:
   rows have a `human_verdict` field; the suffix is a
   legacy-naming-not-worth-renaming choice flagged in the project
   status doc.
+
+---
+
+## Quick load
+
+```python
+from datasets import load_dataset
+
+sft = load_dataset(
+    "krishnakartik/gemma4-social-bias-judge-pairs",
+    data_files="sft.jsonl",
+    split="train",
+)
+dpo = load_dataset(
+    "krishnakartik/gemma4-social-bias-judge-pairs",
+    data_files="dpo.jsonl",
+    split="train",
+)
+eval_holdout = load_dataset(
+    "krishnakartik/gemma4-social-bias-judge-pairs",
+    data_files="eval_set_unlabeled.jsonl",
+    split="train",
+)
+```
+
+`sft` and `dpo` are ready to feed `trl.SFTTrainer` /
+`trl.DPOTrainer` directly — the schemas (below) match TRL's
+prompt-completion and prompt-chosen-rejected expectations. The
+eval holdout is what the [primary model card's](https://huggingface.co/krishnakartik/gemma4-social-bias-judge#eval-results)
+κ numbers are computed against; use it to validate any retrained
+checkpoint against the same ground truth.
 
 ---
 
@@ -191,17 +224,50 @@ methodology bet — see decision #22 in the project status doc.
 
 ## License
 
-Apache 2.0 for the dataset structure and the synthesized DPO
-rejecteds. The underlying BBQ questions are CC-BY-4.0
-([Parrish et al., 2022](https://github.com/nyu-mll/BBQ)).
+**Apache 2.0** covers the dataset structure, the candidate
+responses elicited from the generator pool, the Sonnet-synthesized
+DPO rejecteds, the verdicts, and the project author's hand-labels
+on the 300-pair eval holdout.
+
+This dataset uses underspecified questions from
+[BBQ (Parrish et al., 2022)](https://github.com/nyu-mll/BBQ) under
+**CC-BY-4.0**; attribution preserved via the BibTeX entry below
+and via the BBQ `pair_id`s embedded in every row.
+
+The chat-template-rendered prompts in `sft.jsonl` and `dpo.jsonl`
+contain Gemma 4 special-tokens (`<start_of_turn>` etc.). Those are
+*functional markers* — instructions to a tokenizer, not Gemma model
+weights — so they do not pull the dataset under Gemma's license.
+The Gemma license covers
+[`google/gemma-4-E4B-it`](https://huggingface.co/google/gemma-4-E4B-it)
+and the SFT/DPO checkpoints fine-tuned from it; not the data used
+to train them.
 
 ## Citation
 
-```
+If you use this dataset, please cite both this work and BBQ:
+
+```bibtex
 @misc{darsipudi2026gemma4judgepairs,
   author = {Krishna Kartik Darsipudi},
   title = {gemma4-social-bias-judge-pairs: Training and eval data for a Gemma 4 social-bias judge},
   year = {2026},
   howpublished = {\url{https://huggingface.co/datasets/krishnakartik/gemma4-social-bias-judge-pairs}},
+}
+
+@inproceedings{parrish-etal-2022-bbq,
+  title     = "{BBQ}: A hand-built bias benchmark for question answering",
+  author    = "Parrish, Alicia  and
+               Chen, Angelica  and
+               Nangia, Nikita  and
+               Phang, Jason  and
+               Thrush, Tristan  and
+               Htut, Phu Mon  and
+               Bowman, Samuel R.",
+  booktitle = "Findings of the Association for Computational Linguistics: ACL 2022",
+  year      = "2022",
+  publisher = "Association for Computational Linguistics",
+  pages     = "2086--2105",
+  url       = "https://aclanthology.org/2022.findings-acl.165",
 }
 ```

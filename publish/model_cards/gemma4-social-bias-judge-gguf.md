@@ -70,18 +70,31 @@ ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0-sft
 
 ### llama.cpp
 
+The judge expects a specific system prompt; pull both the GGUF and
+the system-prompt text into a working directory before invoking
+`llama-cli`.
+
 ```bash
+# 1. Pull the GGUF.
 huggingface-cli download \
   krishnakartik/gemma4-social-bias-judge-gguf Q8_0.gguf \
   --local-dir ./gemma4-judge
 
+# 2. Pull the system prompt (Apache-2.0; canonical source in the
+#    judge-from-scratch repo).
+curl -fsSL -o ./gemma4-judge/system_prompt.md \
+  https://raw.githubusercontent.com/krishnakartik1/judge-from-scratch/main/data/judge_system_prompt.md
+
+# 3. Run.
 llama-cli -m ./gemma4-judge/Q8_0.gguf \
   --temp 0 --ctx-size 4096 \
-  --system-prompt-file data/judge_system_prompt.md
+  --system-prompt-file ./gemma4-judge/system_prompt.md
 ```
 
-The Modelfiles in this repo (`Modelfile.Q8_0` etc.) embed the judge
-system prompt and the temperature / num_ctx settings already.
+Ollama users can skip the system-prompt download — the Modelfiles
+in this repo (`Modelfile.Q8_0` etc.) embed the judge system prompt
+and the `temperature` / `num_ctx` settings already, so
+`ollama run hf.co/...:Q8_0` is fully self-contained.
 
 ---
 
