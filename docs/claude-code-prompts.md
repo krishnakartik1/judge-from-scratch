@@ -590,12 +590,9 @@ docs/project-status.md decisions #12 (Gemma 4 E4B target),
 #13 (thinking mode disabled, custom tags), and Stage 5 outputs
 (SFT row count, format).
 
-Project lives at ~/Documents/reval-judge (the directory is named
-reval-judge for historical reasons but the project is
-judge-from-scratch — don't rename mid-stage). All Stage 6 code
-goes under train/ in the repo. Modal-specific code lives in
-train/modal/. Local-runnable scripts (configs, validators) stay
-in train/.
+Project: judge-from-scratch. All Stage 6 code goes under train/
+in the repo. Modal-specific code lives in train/modal/.
+Local-runnable scripts (configs, validators) stay in train/.
 
 PROJECT-WIDE INVARIANTS (must hold throughout):
 - Fine-tuning target: unsloth/gemma-4-E4B-it (verified Stage 5;
