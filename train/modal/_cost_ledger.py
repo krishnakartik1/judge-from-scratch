@@ -65,6 +65,12 @@ STAGE6_BUDGET_CAP_USD: float = 30.0
 # expected, $7.44 worst-case) with comfortable headroom for retries.
 STAGE7_BUDGET_CAP_USD: float = 26.37
 
+# Stage 8 (vLLM eval pivot) budget cap. Realistic worst case under the
+# @app.cls amortization assumption is ~$3.75 (3 models × 30-min
+# ceiling × $2.50/h). The $10 cap absorbs ~3× that for retries and
+# ad-hoc smoke runs without forcing operator overrides on every run.
+STAGE8_BUDGET_CAP_USD: float = 10.0
+
 
 class BudgetExceededError(RuntimeError):
     """Raised when projected + cumulative spend would exceed the cap."""
