@@ -42,14 +42,17 @@ ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0
 
 That downloads the 8.03 GB Q8_0 GGUF, starts an OpenAI-compatible API on `localhost:11434/v1`, and accepts requests in seconds.
 
+**4. Curious about the AI-assisted workflow itself.**
+See [`docs/how-this-was-built.md`](docs/how-this-was-built.md) — Claude chat for concepts, Claude Projects for persistent context, Claude Code for staged implementation, and what to delegate vs own yourself.
+
 ## How this was built
 
-This project was built with Claude as a collaborator at every level. The split:
+This project was built with Claude as a collaborator at every level. The split, in brief:
 
 - **Claude in chat (via a Claude Project).** Concept exploration, primer authoring, design decisions. The Project's "knowledge" was the [primer](docs/fine-tuning-primer.md), the [build prompts](docs/claude-code-prompts.md), and the [project status](docs/project-status.md) — three files attached so any new chat could pick up context without re-explaining the project.
 - **Claude Code, one prompt per stage.** Each stage's spec is in [`docs/claude-code-prompts.md`](docs/claude-code-prompts.md) — scoped, narrow, with explicit dryrun gates. One prompt → one PR-shaped commit.
 
-The split worked because the two tools have different strengths. Long chat is good at "should we hold out religion or religion+disability?" Claude Code is good at "given this spec, write a 200-line resumable async script with proper error handling." See [`docs/story-data.md`](docs/story-data.md#how-this-project-was-built) for the longer discussion of what stayed yours vs what to delegate.
+Long chat is good at "should we hold out religion or religion+disability?" Claude Code is good at "given this spec, write a 200-line resumable async script with proper error handling." Full discussion of the workflow pattern, what stays yours, and what to delegate is in [`docs/how-this-was-built.md`](docs/how-this-was-built.md).
 
 ## Worked example
 

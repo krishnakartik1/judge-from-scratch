@@ -6,26 +6,28 @@ This is a tour of how `judge-from-scratch` actually got built. It's not a tutori
 
 If LoRA, QLoRA, SFT, and DPO are new to you, [`docs/fine-tuning-primer.md`](fine-tuning-primer.md) is the conceptual foundation — start there. If you want to see the exact prompts that produced each script, [`docs/claude-code-prompts.md`](claude-code-prompts.md) is the build manual.
 
-## How this project was built
+For how the project was built with Claude (chat for concepts, Projects for persistent context, Code for implementation), see [How This Was Built](how-this-was-built.md).
 
-Two AI tools, each doing what it's good at:
+## Where your time actually goes
 
-- **Claude in chat (via a Claude Project).** The conceptual work — the [primer](fine-tuning-primer.md), the data design, the eval methodology — was all developed in long-form conversation. The Project's "knowledge" was the primer, the [build prompts](claude-code-prompts.md), and the [project status](project-status.md) — three files attached as project knowledge so any new chat could pick up context without re-explaining the project. When a stage finished, the status file got updated and the next chat session inherited that context automatically.
-- **Claude Code for staged implementation.** Each pipeline stage was built from a single scoped prompt in [`docs/claude-code-prompts.md`](claude-code-prompts.md). One prompt per stage, one PR per stage. Inside each stage, Claude Code wrote the script, ran the dryrun, surfaced the dryrun output, waited for review, and then ran the full thing.
+When you build a fine-tuning pipeline with an agentic coding tool like Claude Code, the implementation — the training loops, the API plumbing, the formatting scripts — is largely delegated. The agent writes that code from a scoped prompt. What the agent *cannot* do is make the upstream decisions that determine whether the trained model is any good. Data generation, pair construction, labeling methodology, eval design — that's where your judgment lives and where the project succeeds or fails.
 
-The split worked because the two tools have different strengths. Long chat is good at "should we hold out religion or religion+disability?" and "how do we close the verbosity-bias hole in the synthesis prompt?" Claude Code is good at "given this spec, write a 200-line resumable async script with proper error handling." Mixing them up — using long chat to write code, or using Claude Code to argue about methodology — wastes both.
+This file (story-data.md) covers the stages where you're making those decisions. [story-training.md](story-training.md) covers the stages where you're mostly reviewing the agent's output and verifying numbers — training loops are routine, eval harnesses follow standard patterns, deployment recipes are recipes.
 
-What stayed yours, what to delegate:
+Both matter, but if you're short on time, read this file carefully and skim the other one.
 
-| You own | The assistant owns |
-|---|---|
-| Data design (which buckets, which categories, why) | Script implementation, async/retry plumbing |
-| Eval methodology (κ, position bias, OOD definition) | API client glue, JSON parsing, file I/O |
-| The labeling rubric | Boilerplate (chat-template wrapping, Modal images, configs) |
-| Deciding when the AI's plan is wrong | Translating a clear plan into working code |
-| What "good enough" looks like for the dataset | Resumability, retries, log formatting |
+## Before you start: decisions you must make first
 
-The skill in using a coding assistant well is partly knowing when *not* to delegate — pushing back when its plan is plausible-looking but wrong. The next sections include several examples of that.
+Six things to lock in before writing a single line of code or prompting a coding assistant. None of these is the agent's call.
+
+1. **Base model.** Which model are you fine-tuning, and why? The choice constrains your VRAM budget, chat template, quantization strategy, and deployment options. This project chose Gemma 4 E4B for its 4B effective parameters, native system prompt support, and Unsloth day-zero QLoRA support.
+2. **Task definition.** What exactly does your model output? Not "it judges bias" — the precise format. This project: `<reasoning>2-5 sentences</reasoning><verdict>A|B|TIE</verdict>`. Locked before any data is generated. Everything downstream (labeling prompts, SFT targets, eval parsing) depends on this being stable.
+3. **Training dataset.** Which benchmark or data source, and why it fits the task. This project chose BBQ because its ambiguous/disambiguated question structure directly elicits the kind of bias the judge needs to detect. CrowS-Pairs was rejected (wrong task). UnQover was deferred (right task, more pipeline work).
+4. **Eval methodology.** How will you know the model works? Decided before training, not after. This project: Cohen's κ vs human labels on a 300-pair holdout, with a held-out bias category (religion) for OOD generalization, plus position-bias rate and self-consistency as robustness checks.
+5. **Output format consistency rule.** Any format decision that must hold across the entire pipeline — train, eval, deploy. This project: native thinking mode disabled everywhere, no `<|think|>` token in any system prompt, custom tags only. Violating this at any stage produces silently wrong results.
+6. **Deployment targets.** Where will this model run? Determines quantization format, serving stack, and what "good enough" means for model size. This project: Ollama (local GGUF) + vLLM (production bf16 serving).
+
+If any of these are undecided, stop and decide them. The coding assistant can help you explore options, but the decision is yours. Changing any of these mid-pipeline means redoing everything downstream of the change.
 
 ## Stage 0 — Repo bootstrap
 
