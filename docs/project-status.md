@@ -42,8 +42,8 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 5 | SFT/DPO dataset formatting (custom tags, no thinking mode) | ✅ Done |
 | 6 | SFT training (Gemma 4 E4B QLoRA on Modal) | ✅ Done |
 | 7 | DPO training | ✅ Done |
-| 8 | Eval harness | ⏳ |
-| 9 | Publishing (HF model + GGUF + dataset) | ⏳ |
+| 8 | Eval harness | ✅ Done |
+| 9 | Publishing (HF model + GGUF + dataset) | ✅ Done |
 | 10 | Deployment recipes (Ollama instructions + vLLM Dockerfile) | ✅ Done |
 | 11 | Tutorial layer (notebooks, walkthroughs, optional HF Space) | ⏳ Post-v1 |
 
