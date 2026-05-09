@@ -962,59 +962,195 @@ correctly. Show me the test output before running on the full 300.
 ## Stage 9: Publishing
 
 ```
-Build the publishing pipeline.
+Stage 8 wrap-up + Stage 9 kickoff.
 
-Read docs/fine-tuning-primer.md Step 9 and project-status.md
-decisions about thinking mode disabled (#13) and Gemma 4 E4B
-target (#12).
+Four tasks in sequence: (a) update project docs to mark Stage 8
+done, (b) write eval findings into the results markdown,
+(b2) commit Stage 8, (c) begin Stage 9 publishing pipeline.
 
-Write three scripts under publish/:
+Read docs/project-status.md, docs/fine-tuning-primer.md Appendix C
+(eval methodology), and docs/claude-code-prompts.md Stage 9 prompt
+before starting.
 
-1. publish/export_gguf.py:
-   - Take outputs/merged-fp16/ as input.
-   - Convert to GGUF using llama.cpp's converter. Verify
-     llama.cpp is installed; if not, document the install steps.
-   - For Gemma 4 small models, Unsloth recommends 8-bit GGUF as
-     the Pareto starting point. Produce both Q8_0 and Q5_K_M.
-   - Save to outputs/gguf/.
+============================================================
+TASK A — UPDATE PROJECT DOCS
+============================================================
 
-2. publish/build_modelfile.py:
-   - Generate an Ollama Modelfile pointing to the Q8_0 GGUF file.
-   - Set system prompt to the judge system prompt (loaded from
-     data/judge_system_prompt.md).
-   - CRITICAL: the system prompt must NOT contain `<|think|>`.
-     Add a startup assertion that checks this before writing
-     the Modelfile.
-   - Set temperature 0, num_ctx 2048.
-   - Output: outputs/Modelfile.
+In docs/project-status.md:
 
-3. publish/upload_hf.py:
-   - Upload three artifacts to Hugging Face:
-     a. krishnakartik/gemma4-social-bias-judge — merged fp16 model
-        with full model card.
-     b. krishnakartik/gemma4-social-bias-judge-gguf — GGUF quantizations
-        with Modelfile and Ollama instructions.
-     c. krishnakartik/gemma4-social-bias-judge-pairs — SFT and DPO
-        training datasets with a dataset card.
-   - Use huggingface_hub. Read HF_TOKEN from .env.
-   - The model card MUST include:
-     * Tutorial framing: this model is the artifact produced by
-       the judge-from-scratch tutorial. Link to the GitHub repo.
-     * Training methodology summary
-     * The eval results table from Stage 8
-     * Intended use, limitations
-     * Reproduction instructions
-     * **Explicit warning** in a prominent section: "This model
-       was fine-tuned with Gemma 4's native thinking mode DISABLED.
-       Do NOT include `<|think|>` in the system prompt at inference
-       time — doing so will produce degraded, untrained behavior."
-     * Output format spec: `<reasoning>...</reasoning><verdict>A|B|TIE</verdict>`
-     * A working Ollama one-liner so users can try it in 30 seconds:
-       `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0`
+1. Mark Stage 8 as ✅ Done in the pipeline table.
 
-For the model card, generate a draft from the eval results JSON
-file. I will hand-edit it before uploading. Don't auto-publish —
-leave the upload behind a --confirm flag.
+2. Add decision #25 (or next number):
+
+   **Pivoted Stage 8 inference from Unsloth to vLLM.** Original
+   Unsloth inference runs were killed by Modal workspace billing
+   cap (container preemptions inflated cost from ~10 s/entry to
+   ~68 s/entry). Additionally, baseline had run under 4-bit
+   quantization while SFT/DPO checkpoints are merged fp16 —
+   comparing across precisions would conflate training
+   improvements with arithmetic precision. Fix: all three models
+   (baseline, SFT, DPO) re-run through vLLM at bf16 on A100.
+   Same backend, same precision, same sampling — only variable
+   across columns is training. Total Stage 8 vLLM cost: ~$4.
+
+3. Add decision #26 (or next number):
+
+   **max_tokens bumped from 384 to 1024 for SFT/DPO inference.**
+   SFT-trained model produces materially longer reasoning than
+   baseline. At 384, ~10% of SFT and ~12% of DPO outputs
+   truncated before <verdict> tag — and truncation correlated
+   with harder cases (longer reasoning = model struggling more).
+   Preview κ with truncated denominator was systematically
+   inflated by 0.06–0.18 depending on bucket. Re-run at 1024
+   recovered full 300-pair denominator with 0.3% parse rate.
+   Headline table uses re-run numbers.
+
+4. Update "Current dataset shape" or "Open threads" sections
+   if any facts have changed.
+
+============================================================
+TASK B — EVAL FINDINGS WRITE-UP
+============================================================
+
+Open eval/results/stage8_final_20260508T121153.md. Below the
+existing table, add a "## Findings" section. Write 4-5
+paragraphs of honest interpretation. Cover these points:
+
+1. **Training worked, but DPO's value is uneven.** In-dist κ
+   improved from 0.48 (baseline) → 0.65 (SFT) → 0.68 (DPO).
+   SFT is the bigger jump; DPO adds a modest +0.03. DPO's
+   clearest wins are on tie cases (−0.06 → 0.36) and subtle
+   bias (0.74 → 0.89). Position bias halved (21% → 8-9%) and
+   self-consistency rose ~10 pts — both clean training wins.
+
+2. **DPO regresses on OOD generalization.** SFT generalizes to
+   held-out religion (κ=0.70) better than DPO (κ=0.64). This
+   is the opposite of the primer's prediction. Likely
+   explanation: synthesized hard negatives encoded patterns
+   specific to the 10 in-dist categories, and DPO learned to
+   discriminate those patterns rather than bias-in-general.
+   This is a genuinely interesting finding, not a failure —
+   it suggests DPO preference data needs OOD diversity, not
+   just in-dist difficulty.
+
+3. **Tracked-vs-alternate is at the task's floor.** κ=0.12-0.20
+   across all models on the hardest bucket, capped by 220
+   training pairs at BBQ's structural ceiling. The synth
+   negatives weren't designed for this bucket specifically.
+   Honest acknowledgment: this slice needs either more data
+   or a different question structure to improve meaningfully.
+
+4. **The SFT checkpoint may be better for OOD use cases.**
+   DPO wins in-dist (0.68 vs 0.65) and ties (0.36 vs −0.06).
+   SFT wins OOD (0.70 vs 0.64) and tracked-vs-alternate
+   (0.20 vs 0.12). Users evaluating bias categories outside
+   the training set should consider the SFT checkpoint.
+   Note: the published model card should surface this as a
+   genuine recommendation, not a hedge.
+
+5. **Truncation bias in eval is real and measurable.** The
+   preview run at max_tokens=384 inflated κ by up to 0.18 on
+   individual buckets by systematically dropping harder cases.
+   Document this as a methodological lesson: token budget for
+   eval must accommodate the trained model's output
+   distribution, not just the baseline's.
+
+Tone: direct, specific, honest. No hedging language like
+"results suggest that perhaps." State the finding, state the
+evidence, state the implication. This is what makes the project
+a portfolio piece.
+
+============================================================
+TASK B2 — COMMIT STAGE 8
+============================================================
+
+Stage 8 is a complete unit of work. Commit before starting
+Stage 9. One stage = one PR-shaped commit.
+
+git add:
+  - eval/modal/vllm_infer.py
+  - eval/modal/merge_adapter.py (if created)
+  - eval/results/stage8_final_*.md
+  - eval/results/stage8_final_*.json
+  - docs/project-status.md (updated)
+  - Any other eval/ files modified during Stage 8
+
+Commit message:
+  "Stage 8: eval harness complete — vLLM inference, full metrics
+
+  Baseline/SFT/DPO evaluated at bf16 via vLLM on A100.
+  Headline: in-dist κ 0.48→0.65→0.68; position bias 21%→8-9%.
+  DPO regresses on OOD religion (0.70→0.64 vs SFT).
+  See eval/results/stage8_final_20260508T121153.md for full table."
+
+Do not start Task C until the commit is clean and pushed.
+
+============================================================
+TASK C — STAGE 9: PUBLISHING PIPELINE
+============================================================
+
+Read docs/claude-code-prompts.md Stage 9 prompt in full. That
+prompt is the spec — follow it, with these amendments based on
+where we actually are:
+
+AMENDMENTS TO THE STAGE 9 SPEC:
+
+1. Model card eval table: use the real numbers from
+   eval/results/stage8_final_20260508T121153.md, not the
+   illustrative placeholders in Appendix C.
+
+2. Model card must include the DPO OOD regression finding
+   prominently. Not buried in limitations — in the eval
+   discussion section. Frame it as: "DPO improves in-dist
+   discrimination but narrows generalization. For bias
+   categories outside the training set, the SFT-only
+   checkpoint may perform better." Link to the SFT
+   checkpoint repo.
+
+3. Two model artifacts to publish, not one:
+   - krishnakartik/gemma4-social-bias-judge — the DPO model
+     (merged fp16), designated as the primary artifact.
+   - krishnakartik/gemma4-social-bias-judge-sft — the SFT-only
+     model (merged fp16 from /vol/checkpoints/sft-merged-fp16/).
+     Shorter model card referencing the main one; positioned as
+     "use this if your bias categories are out-of-distribution
+     relative to BBQ's training set."
+
+4. GGUF export: produce 8-bit GGUF for BOTH the DPO and SFT
+   models. The Ollama one-liner in the model card points to
+   the DPO GGUF by default, with a note about the SFT
+   alternative.
+
+5. The model card's thinking-mode warning must appear in THREE
+   places: (a) a dedicated "Important: Thinking Mode" section
+   near the top, (b) in the quick-start code snippet as a
+   code comment, (c) in the Ollama Modelfile as a comment.
+   People skim. Say it three times.
+
+6. Dataset artifact
+   (krishnakartik/gemma4-social-bias-judge-pairs): include
+   both SFT and DPO formatted data, plus the raw labeled
+   pairs. Dataset card should document the labeling pipeline
+   (Sonnet 4.6 primary, GPT-5.4 + Qwen 3 235B cross-check,
+   17.4% hard-bucket disagreement rate).
+
+PRE-FLIGHT CHECKS (before writing any publishing code):
+
+1. Verify llama.cpp is available or document install steps.
+   The GGUF conversion depends on it.
+2. Verify the HF model card spec in the Stage 9 prompt
+   against what we actually have (real eval numbers, two
+   checkpoints, the OOD finding). Flag any gaps.
+3. Confirm both merged checkpoints exist on the Modal volume:
+   /vol/checkpoints/sft-merged-fp16/
+   /vol/checkpoints/merged-fp16/
+
+START WITH:
+- The model card draft (markdown). This is the load-bearing
+  artifact — get it right before writing export/upload scripts.
+- Show me the draft before proceeding to GGUF export or upload.
+
+Do not auto-publish anything. Everything behind --confirm flags.
 ```
 
 ---
@@ -1044,64 +1180,174 @@ educational purposes:
 
 Write the following under deployment/:
 
-1. deployment/ollama/README.md:
-   - Step-by-step instructions for pulling the published GGUF and
-     running it locally via Ollama.
-   - Working one-liner: `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0`
-   - Example curl command and Python client (using openai SDK
-     pointed at Ollama's OpenAI-compatible endpoint at
-     http://localhost:11434/v1).
-   - Example judge invocation: send a question and two responses,
-     parse the `<reasoning>`/`<verdict>` output.
-   - Troubleshooting: "if the model emits an empty thought block,
-     check that you didn't include `<|think|>` in the system prompt."
-   - System requirements: ~8 GB free disk, ~6 GB free RAM.
+============================================================
+TASK 1 — OLLAMA README
+============================================================
 
-2. deployment/vllm/Dockerfile:
-   - Base image: vllm/vllm-openai (latest tag).
-   - Mount or download the merged fp16 model from HF.
-   - ENTRYPOINT runs vLLM's OpenAI-compatible server with
-     appropriate flags for Gemma 4 E4B (--model krishnakartik/gemma4-social-bias-judge,
-     --max-model-len 2048, --dtype bfloat16, --port 8000).
+deployment/ollama/README.md:
+- Step-by-step instructions for pulling the published GGUF and
+  running it locally via Ollama.
+- Working one-liner:
+  `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0`
+- Example curl command and Python client (using openai SDK
+  pointed at Ollama's OpenAI-compatible endpoint at
+  http://localhost:11434/v1).
+- Example judge invocation: send a question and two responses,
+  parse the `<reasoning>`/`<verdict>` output.
+- Troubleshooting: "if the model emits an empty thought block,
+  check that you didn't include `<|think|>` in the system prompt."
+- System requirements: ~9 GB free disk, ~10 GB free RAM
+  (Q8_0 GGUF is 8.03 GB; inference needs model + KV cache).
+- Mention the SFT-only variant:
+  `ollama run hf.co/krishnakartik/gemma4-social-bias-judge-gguf:Q8_0-sft`
+  with a one-sentence note on when to prefer it (OOD bias
+  categories) and a link to the primary model card's OOD
+  discussion.
 
-3. deployment/vllm/docker-compose.yml:
-   - Single-service compose file for local testing.
-   - GPU passthrough configured.
-   - Volume mount for HF cache so model isn't re-downloaded each restart.
+============================================================
+TASK 2 — vLLM DOCKERFILE + COMPOSE
+============================================================
 
-4. deployment/vllm/README.md:
-   - How to build and run the container locally.
-   - Example client code in Python (openai SDK pointed at
-     http://localhost:8000/v1) and curl.
-   - One-paragraph note on what cloud hosting would cost (Modal,
-     RunPod, HF Inference Endpoints) without prescribing a specific
-     vendor. Approximate range only.
-   - Troubleshooting: thinking-mode warning, OOM expectations on
-     small GPUs.
+deployment/vllm/Dockerfile:
+- Base image: vllm/vllm-openai (latest tag).
+- Mount or download the merged fp16 model from HF.
+- ENTRYPOINT runs vLLM's OpenAI-compatible server:
+  --model krishnakartik/gemma4-social-bias-judge
+  --max-model-len 4096
+  --dtype bfloat16
+  --port 8000
 
-5. deployment/example_client.py:
-   - A standalone Python script that works against EITHER deployment.
-   - Takes a backend flag (--backend ollama|vllm).
-   - Sends a sample judge prompt, parses the output, prints verdict.
-   - Demonstrates both happy path and error handling.
+deployment/vllm/docker-compose.yml:
+- Single-service compose file for local testing.
+- GPU passthrough configured.
+- Volume mount for HF cache so model isn't re-downloaded
+  each restart.
 
-CRITICAL CONSTRAINTS:
-- All system prompts in all deployment artifacts must NOT contain
-  `<|think|>`. Add a comment block in each file noting why.
-- The system prompt content must match data/judge_system_prompt.md
-  exactly. If that file changes, these artifacts must be regenerated.
-- Test the Ollama path locally before committing — it's the lowest-
-  friction path for tutorial readers and must work reliably.
+============================================================
+TASK 3 — vLLM README
+============================================================
 
-After writing, do a smoke test:
-1. Build the Docker image (locally if possible, otherwise validate
-   the Dockerfile syntactically).
-2. Pull the GGUF via the Ollama one-liner and run a single test
-   prompt end-to-end.
-3. Run example_client.py against the local Ollama endpoint and
-   confirm it parses output correctly.
+deployment/vllm/README.md:
+- How to build and run the container locally.
+- Example client code in Python (openai SDK pointed at
+  http://localhost:8000/v1) and curl.
+- One-paragraph note on what cloud hosting would cost (Modal,
+  RunPod, HF Inference Endpoints) without prescribing a
+  specific vendor. Approximate range only.
+- Troubleshooting: thinking-mode warning, OOM expectations
+  on small GPUs, minimum VRAM (~16 GB for bf16).
 
-Show me the smoke test results before considering this stage done.
+============================================================
+TASK 4 — EXAMPLE CLIENT
+============================================================
+
+deployment/example_client.py:
+- A standalone Python script that works against EITHER
+  deployment backend.
+- Takes a --backend flag (ollama | vllm).
+- Sends a sample judge prompt, parses the output, prints
+  verdict and reasoning.
+- Demonstrates both happy path and error handling (connection
+  refused, parse failure, empty output).
+
+============================================================
+TASK 5 — SMOKE TEST
+============================================================
+
+1. Validate the Dockerfile syntactically (docker build
+   --check or equivalent — do NOT attempt to run the vLLM
+   container locally, bf16 needs ~16 GB VRAM which is not
+   available on this machine).
+2. Pull the GGUF via the Ollama one-liner and run a single
+   test prompt end-to-end LOCALLY (Ollama runs on CPU,
+   just slower — this is the reader's lowest-friction path
+   and must be verified).
+3. Run example_client.py against the local Ollama endpoint
+   and confirm it parses output correctly.
+
+Show me the smoke test results before proceeding to Task 6.
+
+============================================================
+TASK 6 — THROUGHPUT AND LATENCY CAPTURE
+============================================================
+
+All GPU benchmarks run on Modal, not locally.
+
+OFFLINE BATCH (from Stage 8 data — no new inference needed):
+- Read the three cache files at /vol/eval/cache/
+  {baseline,sft,dpo}_predictions.jsonl.
+- For each model: count total output tokens across all records
+  (tokenize raw_output with the Gemma 4 tokenizer), divide by
+  the wall-clock time from the Stage 8 run logs (check Modal
+  dashboard for billed duration if not in scrollback).
+- Report: prompts/min, output tokens/sec, input tokens/sec.
+
+SERVING LATENCY (on Modal, not local):
+- Write deployment/modal/vllm_bench.py.
+- Stand up a vLLM server as a Modal function (reuse the
+  vLLM image from Stage 8's eval/modal/vllm_infer.py).
+  Load the DPO model from /vol/checkpoints/merged-fp16/.
+- Add a --benchmark flag to deployment/example_client.py.
+- When --benchmark is passed:
+  1. Run 50 sequential requests to the Modal-hosted vLLM
+     endpoint. Record time-to-first-token and total latency
+     per request.
+  2. Run 16 concurrent requests (asyncio + aiohttp).
+     Record aggregate throughput (requests/sec, tokens/sec).
+  3. Print a summary table: p50/p95 TTFT, p50/p95 total
+     latency, sequential tokens/sec, concurrent tokens/sec.
+- Use the same judge prompt for all benchmark requests (one
+  clear-bias eval pair, hardcoded in the benchmark).
+- Tear down the Modal function after benchmarking. Expected
+  cost: ~$0.30 for ~5 min A100.
+
+COST COMPARISON:
+- Compute cost-per-pair for the self-hosted judge: Modal A100
+  hourly rate ÷ pairs/hour from the batch numbers.
+- Compare against Stage 4 Sonnet labeling cost per pair
+  ($14.34 / 1,937 pairs ≈ $0.0074/pair).
+- Print the ratio. This is the "~Nx lower inference cost"
+  number for the resume line.
+
+Save all benchmark results to deployment/benchmark_results.json.
+
+============================================================
+TASK 7 — COMMIT STAGE 10
+============================================================
+
+git add:
+  - deployment/ (all new files)
+  - docs/project-status.md (mark Stage 10 ✅ Done)
+  - Any pyproject.toml changes (if vllm or aiohttp was added)
+
+Commit message:
+  "Stage 10: deployment recipes — Ollama + vLLM + benchmarks
+
+  Ollama one-liner, vLLM Dockerfile + compose, example client
+  with --benchmark flag. Batch throughput: X tok/s (DPO, A100).
+  Cost per pair: $Y vs $0.0074 Sonnet labeling = Zx reduction."
+
+Fill in X, Y, Z from Task 6 results.
+
+Do not start Task 7 until Tasks 1-6 are complete and I've
+reviewed the smoke test and benchmark results.
+
+============================================================
+CRITICAL CONSTRAINTS
+============================================================
+
+- All system prompts in all deployment artifacts must NOT
+  contain `<|think|>`. Add a comment block in each file
+  noting why.
+- The system prompt content must match
+  data/judge_system_prompt.md exactly. If that file changes,
+  these artifacts must be regenerated.
+- Test the Ollama path locally before committing — it's the
+  lowest-friction path for tutorial readers and must work
+  reliably.
+- ctx-size / max-model-len is 4096 everywhere in deployment
+  artifacts (not 2048 from training — deployment gives users
+  headroom).
 ```
 
 ---
