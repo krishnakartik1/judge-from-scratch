@@ -1,0 +1,31 @@
+# Stage 10: docker-compose for local vLLM serving of the judge.
+#
+# Requires NVIDIA Container Toolkit. Minimum ~16 GB VRAM for bf16
+# inference (~8B params * 2 bytes + KV cache). Set HF_TOKEN if the
+# upstream model becomes gated; not required while it is public.
+#
+# Bring up: `docker compose up --build`
+# Tear down: `docker compose down` (the hf_cache volume persists)
+
+services:
+  vllm-judge:
+    build: .
+    image: gemma4-social-bias-judge-vllm:latest
+    container_name: vllm-judge
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf_cache:
