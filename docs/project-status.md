@@ -4,7 +4,10 @@
 
 Living document. Update after each stage completion or significant decision.
 
-Last updated: end of Stage 7 (DPO training). Stages 3a, 4, 5, 6, and 7 complete. DPO adapter at `/vol/checkpoints/dpo-final/`, merged fp16 at `/vol/checkpoints/merged-fp16/`.
+Last updated: end of Stage 11 (tutorial layer). All v1 stages (0-11) complete.
+Two-part narrative under `docs/story-{data,training}.md`, 11 stage-refs under
+`docs/stage-refs/`, troubleshooting at `docs/troubleshooting.md`, README polish,
+HF Space recipe at `space/` (committed; push deferred).
 
 ---
 
@@ -14,7 +17,7 @@ Last updated: end of Stage 7 (DPO training). Stages 3a, 4, 5, 6, and 7 complete.
 
 **The judge's task:** given a question and two model responses, output reasoning + a verdict on which response shows more social bias (A / B / TIE) plus a confidence score.
 
-**Methodology in one sentence:** Distillation through synthetic data — Claude Opus 4.7 as labeler, BBQ-derived pairs as training corpus, QLoRA + SFT + DPO as the training recipe.
+**Methodology in one sentence:** Distillation through synthetic data — Claude Sonnet 4.6 as primary labeler (decision #17), GPT-5.4 + Qwen 3 235B for cross-check triangulation, BBQ-derived pairs as training corpus, QLoRA + SFT + DPO as the training recipe.
 
 **Audience:** readers who know Python and basic ML, learning fine-tuning from scratch. The conceptual primer covers gradient descent, LoRA, QLoRA, SFT, and DPO with the assumption that readers are comfortable with the math but haven't fine-tuned a transformer before.
 
@@ -37,7 +40,7 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 1.5 | Enrichment (bias classification) | ✅ Done |
 | 2 | Pair construction | ✅ Done |
 | 3a | Eval set holdout (BBQ in-dist + religion held-out OOD) | ✅ Done |
-| 3b | Hand-labeling tool + 300-pair manual labeling | ⏳ |
+| 3b | Hand-labeling tool + 300-pair manual labeling | ✅ Done |
 | 4 | Claude labeling (primary + cross-check) | ✅ Done |
 | 5 | SFT/DPO dataset formatting (custom tags, no thinking mode) | ✅ Done |
 | 6 | SFT training (Gemma 4 E4B QLoRA on Modal) | ✅ Done |
@@ -45,7 +48,7 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 8 | Eval harness | ✅ Done |
 | 9 | Publishing (HF model + GGUF + dataset) | ✅ Done |
 | 10 | Deployment recipes (Ollama instructions + vLLM Dockerfile) | ✅ Done |
-| 11 | Tutorial layer (notebooks, walkthroughs, optional HF Space) | ⏳ Post-v1 |
+| 11 | Tutorial layer (narrative + stage refs + troubleshooting + Space recipe) | ✅ Done |
 
 ---
 
@@ -78,7 +81,7 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | Adversarial (length + confidence) | 250 |
 | **Total** | **2,370 pairs** |
 
-**Eval split (planned for Stage 3a, religion-only OOD holdout):** religion category (192 pairs in actual data, lowercase `bias_category` field) is held out from training entirely. From those, 60 pairs become the OOD eval slice via 28/12/9/6/5 stratification (mirroring the in-dist split's proportions). The remaining 132 pairs from religion are unused in v1 (preserves the holdout). 240 pairs stratified across the 10 trained-on categories form the in-distribution eval slice. Training pool: 2,370 − 192 − 240 = 1,938 pairs. After position-swap doubling: ~3,876 SFT rows. Below the primer's 5,000-row "comfort floor" but workable; eval will reveal whether the pool was too tight.
+**Eval split (Stage 3a, religion-only OOD holdout, shipped):** religion category (192 pairs in actual data, lowercase `bias_category` field) is held out from training entirely. From those, 60 pairs become the OOD eval slice via 28/12/9/6/5 stratification (mirroring the in-dist split's proportions). The remaining 132 pairs from religion are unused in v1 (preserves the holdout). 240 pairs stratified across the 10 trained-on categories form the in-distribution eval slice. Training pool: 2,370 − 192 − 240 = 1,938 pairs sent to Stage 4 labeling; one pair dropped during labeling (decision #19) → 1,937 labeled, 1,922 retained after the `confidence < 3` filter; after position-swap doubling = **3,844 SFT rows** (final). Below the primer's 5,000-row "comfort floor" but workable; Stage 8 eval confirmed the pool size was not the binding constraint on in-dist κ.
 
 ---
 
@@ -152,6 +155,8 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 31. **Stage 8 `max_tokens` bumped 384 → 1024 for SFT/DPO inference.** First vLLM run-all under the post-pivot 384-token budget (sized off the Stage 6 dryrun per decision #24) hit 10.1% parse failures on SFT and 9.9% on DPO; baseline was 0%. Diagnosis: SFT-trained reasoning is materially longer than baseline's, and the truncated outputs always cut off mid-sentence before the closing `</reasoning><verdict>` tags. The truncation was systematically biased toward the harder cases — pairs where the model wrote longer reasoning are the ones where it was struggling most (subtle bias, tracked-vs-alternate, OOD religion). Reporting the parse-fail-excluded κ as the headline would have inflated the numbers by 0.06–0.18 depending on bucket: in-dist κ went from preview 0.731 → headline 0.647 for SFT (Δ=−0.084), DPO OOD κ went from 0.820 → 0.643 (Δ=−0.177). 1024 tokens leaves prompt-token ceiling at `4096 − 1024 − 32 = 3040`, well above the smoke test's max_prompt_tokens of 732. Re-run achieved 0.2–0.3% parse rate (5 SFT, 7 DPO out of 2100 each — these are the few cases where reasoning genuinely exceeds 1024 tokens). Both preview and headline result files retained under `eval/results/` for the methodology record. **Methodological lesson: token budget for eval must accommodate the trained model's output distribution, not just the baseline's** — the failure mode here is silent and selection-biased.
 
 32. **Stage 8 evaluation complete.** Baseline / SFT / DPO evaluated on the 300-pair holdout (240 in-dist + 60 OOD religion). Headline numbers (in `eval/results/stage8_final_20260508T121153.md`): in-dist κ 0.481 → 0.647 → 0.682 (SFT lands at the 0.68 realistic target; DPO matches it). OOD religion κ 0.542 → 0.695 → 0.643 — DPO regresses on OOD by 0.052 vs SFT. Position-bias rate 21% → 8–9% in-dist (clean win). Self-consistency at T=0.3: 74% → 83%. Subtle-bias κ 0.63 → 0.74 → **0.89** (DPO's clearest win). Tie-cases κ −0.06 (SFT) → 0.36 (DPO) — SFT genuinely worse than chance on ties; DPO recovers. Tracked-vs-alternate stays at the supply-bound floor (0.20 SFT → 0.12 DPO; only 220 training pairs). Stretch κ target (0.76 in-dist) not reached. The DPO-OOD-regression is a real finding, not a hedge: synth-hard-negatives encoded patterns specific to the 10 in-dist categories rather than bias-in-general. SFT-only checkpoint should be published alongside DPO as the recommended artifact for OOD use cases. Total Stage 8 vLLM-pivot spend: ~$3 of the $10 STAGE8_BUDGET_CAP_USD (one full run-all + SFT/DPO re-run at max_tokens=1024).
+
+33. **Stage 11 tutorial layer is markdown narrative, not notebooks.** The earlier prompt sketch (Stage 11 section in `docs/claude-code-prompts.md`) called for `notebooks/01-data-exploration.ipynb` etc. Replaced with a two-part narrative (`docs/story-data.md` + `docs/story-training.md`), per-stage reference files under `docs/stage-refs/`, and a troubleshooting doc. Reasoning: the build artifact is the pipeline scripts + the prompts that produced them. Re-running code in a parallel notebook format duplicates the scripts without adding pedagogical value; explaining *which decisions to make and why* does. The Gradio Space (`space/app.py`, llama-cpp-python + Q5_K_M GGUF backend, `cpu-basic` Spaces tier) is committed as a recipe but not pushed — push is a follow-up step the maintainer triggers when ready.
 ---
 
 ## Open threads / known constraints
@@ -162,11 +167,11 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 
 - ~~**Stage 5b weaker labeling for DPO rejected** uses Qwen 2.5 7B via Together AI.~~ Resolved: dropped per decision #22 in favor of Sonnet-synthesized hard negatives (cross-checker disagreements signal rubric divergence, not weaker-model mistakes). See decisions #22-23.
 
-- **Hand-labeling 300 eval pairs** is the next big time sink. 6-10 hours of careful manual work. Don't rush — this is the foundation of every reported metric.
+- ~~**Hand-labeling 300 eval pairs** is the next big time sink.~~ Resolved: Stage 3b complete; the 300-pair holdout is fully labeled and is the basis for every Stage 8 κ number.
 
-- **Gemma 4 E4B is two weeks old at time of writing.** Unsloth's day-zero support is real but at least one community report describes OOM and broken-quantization issues during early Gemma 4 fine-tuning attempts. Mitigation: Stage 6 dry-run on ~50 rows must succeed before scaling to full training.
+- ~~**Gemma 4 E4B is two weeks old at time of writing.**~~ Resolved: Stage 6 SFT and Stage 7 DPO both shipped on Modal A100-40GB without OOM or broken-quantization issues (decisions #24, #29). Empirical VRAM at peak: 23.4 GB SFT, 27.8 GB DPO.
 
-- **Stage 6+ VRAM expectations need re-baselining.** The primer's "8 GB fp16, 2 GB 4-bit" math was for plain Gemma 3 4B. Gemma 4 E4B has ~6.87B raw params; expect ~14 GB fp16, ~4 GB 4-bit. Unsloth says 12 GB+ VRAM works for QLoRA, free Colab T4 fits.
+- ~~**Stage 6+ VRAM expectations need re-baselining.**~~ Resolved: empirical numbers above. The primer's "12 GB+ for QLoRA" prediction held — A100-40GB has ample headroom.
 
 - **Training pool below primer's "comfort floor."** Primer suggested ~5,000 SFT rows as a saturation-curve sweet spot; final SFT pool landed at 3,844 rows (1,922 unique pairs × position-swap). Trainable but may underperform. Eval results will tell us whether the pool size was the binding constraint or whether data quality compensates.
 
@@ -178,32 +183,30 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 
 ## Files in the project
 
+**Core context files** (load these into a fresh chat or Claude Code session for full project context):
+
 - `README.md` — entry point, three reading paths, repo overview
 - `docs/fine-tuning-primer.md` — conceptual reference (Steps 1-9 + Appendices A-D)
 - `docs/claude-code-prompts.md` — staged build prompts for Claude Code
 - `docs/project-status.md` — this file
 
-These are the load-bearing documents. The chat conversations that produced them are not — once these files exist, fresh chat sessions or Claude Code sessions can pick up cleanly with just these as context.
+**Tutorial layer (Stage 11):**
+
+- `docs/story-data.md` — narrative Part 1 (Stages 0-5)
+- `docs/story-training.md` — narrative Part 2 (Stages 6-10)
+- `docs/stage-refs/stage{0..10}.md` — per-stage reference (paths, row counts, decisions, key outputs)
+- `docs/troubleshooting.md` — symptom/cause/fix entries from real Stage 4-10 incidents
+- `space/` — Gradio Space recipe (committed; push deferred)
+
+The four core context files are still the load-bearing source for fresh AI sessions; the tutorial layer is for human readers who want to follow the build.
 
 ---
 
 ## What's next
 
-### Immediate
+### v1 status
 
-Stages 3a / 3b / 4 / 5 / 6 / 7 / 8 complete. Next on the critical path:
-
-- **Stage 9** — HuggingFace publish + GGUF export. Two model artifacts (DPO as primary, SFT-only as a secondary "use this if your bias categories are OOD"), Q8_0 + Q5_K_M GGUFs for both, dataset card with cross-checker disagreement statistics. See `docs/claude-code-prompts.md` Stage 9 prompt and the eval findings in `eval/results/stage8_final_20260508T121153.md` for the headline numbers and the OOD regression caveat that the model card should surface prominently.
-
-### v1 build (Stages 3b-10)
-
-After 3a finishes:
-- 3b: hand-label 300 pairs over multiple sessions (~6-10 hours).
-- 4: Claude labeling pipeline (background, 12-24h Batch API turnaround).
-- 5-9: format → SFT → DPO → eval → publish.
-- 10: deployment recipes (Ollama instructions in model card, vLLM Dockerfile).
-
-Stages 3b and 4 can run in parallel — 3b is your time, 4 is wall-clock background time.
+All v1 stages complete (0-11). Two model artifacts published, deployment recipes shipped, tutorial layer in place. See the pipeline status table above and `docs/story-{data,training}.md` for the narrative walk-through.
 
 ### v2 milestones (deferred until v1 ships)
 
@@ -213,14 +216,9 @@ Stages 3b and 4 can run in parallel — 3b is your time, 4 is wall-clock backgro
 
 **Order: v1 → v2b → v2a.** Reasoning: v2a's autoresearch loop optimizes against the eval set as reward signal, so strengthening the eval set (v2b) before running the optimization (v2a) means the agent is optimizing against a more meaningful number.
 
-### Stage 11 — tutorial layer (post-v1)
+### Stage 11 — tutorial layer (shipped)
 
-After v1 ships and the deployment recipes work end-to-end:
-- Notebooks for each pipeline stage with working code and analysis
-- Hosted HF Space with Gradio UI for "click here to try it" demo
-- README polish, examples, troubleshooting docs
-
-Deliberately deferred. The temptation to write tutorial content while figuring out what works is real and produces neither good code nor good tutorials. Build first, document second.
+Per decision #33, replaced the original notebook plan with markdown narrative + per-stage references + troubleshooting + a committed Gradio Space recipe. The Space is not yet pushed to HF Spaces — push is a follow-up step the maintainer triggers when ready (see `space/README.md`).
 
 ### Future projects (separate repos)
 
