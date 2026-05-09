@@ -1,0 +1,110 @@
+{
+  "git_sha": "51ae1ccd8153fc202521a27b81fd5ef3fc82d2b9",
+  "captured_at": "2026-05-09T03:57:37.305443+00:00",
+  "modal_gpu": "A100-80GB",
+  "modal_usd_per_hour": 2.5,
+  "vllm_image_ref": "modal nightly cu129 wheels on nvidia/cuda:12.9.0-devel-ubuntu22.04 (inlined from eval.modal.vllm_infer.vllm_image)",
+  "local_docker_image_ref": "vllm/vllm-openai:latest (stable; what users running deployment/vllm/Dockerfile get)",
+  "_image_divergence_note": "Modal benchmark numbers come from the nightly cu129 image used in Stage 8. Local Docker users running vllm/vllm-openai:latest will see different (typically slower) throughput. Treat live_serving as a Stage-8-image data point, not a guarantee for the local Dockerfile.",
+  "model_revision": "d33a781cd314edff92b9fee1311568f208f2cf20",
+  "cuda_graphs": true,
+  "offline_batch": {
+    "baseline": {
+      "rows": 2100,
+      "wallclock_s": 330.41,
+      "output_tokens": 210808,
+      "prompts_per_min": 381.34,
+      "output_tok_s": 638.02
+    },
+    "sft": {
+      "rows": 2100,
+      "wallclock_s": 554.26,
+      "output_tokens": 486714,
+      "prompts_per_min": 227.33,
+      "output_tok_s": 878.13
+    },
+    "dpo": {
+      "rows": 2100,
+      "wallclock_s": 393.81,
+      "output_tokens": 486832,
+      "prompts_per_min": 319.95,
+      "output_tok_s": 1236.21
+    }
+  },
+  "live_serving": {
+    "sequential": {
+      "n": 50,
+      "n_failed": 0,
+      "n_degraded_ttft": 0,
+      "concurrency": 1,
+      "wall_s": 122.178,
+      "p50_ttft_s": 0.2968,
+      "p95_ttft_s": 3.1083,
+      "p50_total_s": 2.1639,
+      "p95_total_s": 4.9415,
+      "output_tok_s": 72.97,
+      "completion_tokens_total": 8915
+    },
+    "concurrent": {
+      "n": 50,
+      "n_failed": 0,
+      "concurrency": 16,
+      "wall_s": 52.351,
+      "p50_total_s": 14.0048,
+      "p95_total_s": 19.8725,
+      "agg_output_tok_s": 170.73,
+      "completion_tokens_total": 8938
+    }
+  },
+  "cost_comparison": {
+    "per_call_apples_to_apples": {
+      "sonnet_usd_per_call": 0.004229,
+      "sonnet_source": "data/labeled/.cost_ledger.jsonl phases primary+retry_primary, $8.1994 / 1939 calls",
+      "modal_usd_per_call": 0.00013,
+      "modal_source": "Modal A100-80GB $2.5/hr \u00f7 DPO offline batch throughput (319.95 prompts/min = 19197.0 calls/hr)",
+      "ratio_sonnet_over_modal_x": 32.47,
+      "live_serving_p50_total_s_for_reference": 2.1639,
+      "notes": "One Sonnet labeling call vs one self-hosted judge call, computed from realistic-at-scale batch throughput (matches the user's spec). Headline number for the resume line. Live-serving p50 latency is captured separately under live_serving for single-stream context."
+    },
+    "per_pair_pipeline": {
+      "sonnet_usd_per_pair": 0.007403,
+      "sonnet_source": "Stage 4 total $14.34 / 1937 pairs (includes Sonnet primary + GPT-5.4 + Qwen 3 cross-checkers)",
+      "modal_usd_per_pair": 0.000912,
+      "modal_source": "Stage 8 DPO Modal spend ($2.5/hr \u00d7 393.81 s) / 300 eval pairs (7 passes per pair)",
+      "ratio_sonnet_over_modal_x": 8.12,
+      "notes": "Full-pipeline labeling cost vs Modal eval-suite cost. Useful context but NOT apples-to-apples \u2014 the Sonnet pipeline includes cross-checkers the self-hosted judge doesn't run."
+    }
+  },
+  "errors": [],
+  "_units_note": "All *_usd_* fields are USD; *_s suffixes are seconds; ratio_* are dimensionless multipliers (use ratio_sonnet_over_modal_x as 'Modal is X-fold cheaper').",
+  "legacy_enforce_eager": {
+    "captured_at": "2026-05-09T03:28:56.969049+00:00",
+    "cuda_graphs": false,
+    "note": "Live serving captured with --enforce-eager (Stage 8 parity flag) before we verified CUDA graph capture works on Gemma 4 E4B. Kept here for the record so the speedup story is reproducible.",
+    "live_serving": {
+      "sequential": {
+        "n": 50,
+        "n_failed": 0,
+        "n_degraded_ttft": 0,
+        "concurrency": 1,
+        "wall_s": 351.112,
+        "p50_ttft_s": 0.3412,
+        "p95_ttft_s": 5.8402,
+        "p50_total_s": 6.482,
+        "p95_total_s": 14.7713,
+        "output_tok_s": 24.94,
+        "completion_tokens_total": 8756
+      },
+      "concurrent": {
+        "n": 50,
+        "n_failed": 0,
+        "concurrency": 16,
+        "wall_s": 239.444,
+        "p50_total_s": 74.5503,
+        "p95_total_s": 100.4519,
+        "agg_output_tok_s": 36.6,
+        "completion_tokens_total": 8764
+      }
+    }
+  }
+}

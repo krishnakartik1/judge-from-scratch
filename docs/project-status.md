@@ -44,7 +44,7 @@ REVAL — the factual-deference and rhetorical-parity evaluation project — is 
 | 7 | DPO training | ✅ Done |
 | 8 | Eval harness | ⏳ |
 | 9 | Publishing (HF model + GGUF + dataset) | ⏳ |
-| 10 | Deployment recipes (Ollama instructions + vLLM Dockerfile) | ⏳ |
+| 10 | Deployment recipes (Ollama instructions + vLLM Dockerfile) | ✅ Done |
 | 11 | Tutorial layer (notebooks, walkthroughs, optional HF Space) | ⏳ Post-v1 |
 
 ---
