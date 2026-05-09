@@ -100,6 +100,11 @@ train/.cost_ledger.jsonl
 .modal/
 wandb/
 
+# Stage 8 eval results — full per-pair predictions + metrics. JSON files
+# can be large and a single run is ~megabytes; the metrics-only summary
+# is committed separately if useful, not the full dump.
+eval/results/
+
 # Caches
 .cache/
 .huggingface/

@@ -40,11 +40,3 @@ notebooks/             step-by-step walkthroughs (added in Stage 11, post-v1)
 ## Status
 
 This repo is being built incrementally. Current state, completed stages, and pending work are tracked in [`docs/project-status.md`](docs/project-status.md).
-
-## What this is, and what it isn't
-
-**This is:** an end-to-end tutorial for fine-tuning a small open-weights LLM into a specialized social-bias evaluation judge. The training signal comes from BBQ (Bias Benchmark for QA). The fine-tuning recipe is QLoRA + SFT + DPO. The deployment options shown are Ollama, vLLM, and Hugging Face.
-
-**This is not:** a political-bias evaluator, a fact-checking model, a moderation tool, or a general-purpose evaluator. The judge is trained for one specific task (relative bias comparison between two model responses) on one specific kind of bias (social/demographic stereotyping as defined by BBQ).
-
-A separate future project, REVAL, is planned to address factual-deference and rhetorical-parity evaluation. That's a different problem with different training data; this repo doesn't attempt it.
